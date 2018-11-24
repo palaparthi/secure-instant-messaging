@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='messaging',
   syntax='proto2',
   serialized_options=None,
-  serialized_pb=_b('\n\x0e\x66induser.proto\x12\tmessaging\"[\n\x08\x46indUser\x12\x13\n\x0bpacket_type\x18\x01 \x02(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x11\n\tipaddress\x18\x03 \x01(\x0c\x12\x15\n\rlist_of_users\x18\x04 \x01(\t')
+  serialized_pb=_b('\n\x0e\x66induser.proto\x12\tmessaging\"\xb7\x01\n\x08\x46indUser\x12\x13\n\x0bpacket_type\x18\x01 \x02(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x11\n\tipaddress\x18\x03 \x01(\t\x12\x0c\n\x04port\x18\x04 \x01(\x05\x12\x15\n\rlist_of_users\x18\x05 \x01(\t\x12\x0e\n\x06sender\x18\x10 \x01(\t\x12\x0f\n\x07message\x18\x11 \x01(\t\x12\n\n\x02id\x18\x12 \x01(\x05\x12\x10\n\x08sequence\x18\x13 \x01(\x05\x12\r\n\x05\x63ount\x18\x14 \x01(\x05')
 )
 
 
@@ -48,15 +48,57 @@ _FINDUSER = _descriptor.Descriptor(
       serialized_options=None, file=DESCRIPTOR),
     _descriptor.FieldDescriptor(
       name='ipaddress', full_name='messaging.FindUser.ipaddress', index=2,
-      number=3, type=12, cpp_type=9, label=1,
-      has_default_value=False, default_value=_b(""),
+      number=3, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
     _descriptor.FieldDescriptor(
-      name='list_of_users', full_name='messaging.FindUser.list_of_users', index=3,
-      number=4, type=9, cpp_type=9, label=1,
+      name='port', full_name='messaging.FindUser.port', index=3,
+      number=4, type=5, cpp_type=1, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='list_of_users', full_name='messaging.FindUser.list_of_users', index=4,
+      number=5, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='sender', full_name='messaging.FindUser.sender', index=5,
+      number=16, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='message', full_name='messaging.FindUser.message', index=6,
+      number=17, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='id', full_name='messaging.FindUser.id', index=7,
+      number=18, type=5, cpp_type=1, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='sequence', full_name='messaging.FindUser.sequence', index=8,
+      number=19, type=5, cpp_type=1, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='count', full_name='messaging.FindUser.count', index=9,
+      number=20, type=5, cpp_type=1, label=1,
+      has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
@@ -72,8 +114,8 @@ _FINDUSER = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=29,
-  serialized_end=120,
+  serialized_start=30,
+  serialized_end=213,
 )
 
 DESCRIPTOR.message_types_by_name['FindUser'] = _FINDUSER

@@ -5,6 +5,12 @@ package messaging;
 message FindUser {
     required string packet_type = 1;
     optional string username = 2;
-    optional bytes ipaddress = 3;
-    optional string list_of_users = 4;
+    optional string ipaddress = 3;
+    optional int32 port = 4;
+    optional string list_of_users = 5;
+    optional string sender = 16;
+    optional string message = 17;
+    optional int32 id = 18;
+    optional int32 sequence = 19;
+    optional int32 count = 20;
 }
