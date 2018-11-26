@@ -4,13 +4,22 @@ package messaging;
 
 message FindUser {
     required string packet_type = 1;
+
+    // login
     optional string username = 2;
-    optional string ipaddress = 3;
-    optional int32 port = 4;
+
+    // list
     optional string list_of_users = 5;
+
+    // fragmented message
     optional string sender = 16;
     optional string message = 17;
     optional int32 id = 18;
     optional int32 sequence = 19;
     optional int32 count = 20;
+
+    // login auth
+    optional bytes encrypted_text = 21;
+    optional bytes iv = 22;
+    optional bytes tag = 23;
 }

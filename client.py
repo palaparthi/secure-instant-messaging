@@ -2,21 +2,31 @@
 
 # Client program for CS6700 ps1
 # Author: Sree Siva Sandeep Palaparthi
-
+import hashlib
+import random
 import socket
 import argparse
-import json
 import os
+
+import binascii
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 import sys
 import threading
 import time
 import signal
 import collections
+
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
+
+import Utils
 import finduser_pb2
 
 message_buffer = {}
 fragment_buffer = {}
 message_id = 0
+state = {}
 
 # username should not be more than 20 characters
 
@@ -36,7 +46,57 @@ def flush():
     sys.stdout.flush()
 
 
-def listen_for_response(me):
+def update_state(a, stage):
+    state['state'] = stage
+    state['a'] = a
+
+
+def load_dh_public_key(pem):
+    key = load_pem_public_key(pem, backend=default_backend())
+    return key
+
+
+def establish_key(packet, username, password):
+    # calculate shared key
+    encrypted_text = packet.encrypted_text
+    salt = 'secureIM' + username
+    hashed_pwd = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000, 32)
+    cipher = Cipher(algorithms.AES(hashed_pwd), modes.GCM(packet.iv, packet.tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    parts = decrypted_text.decode().split('|')
+    server_df_contribution = 0
+    c1 = 0
+    if username == parts[0]:
+        server_df_contribution = load_dh_public_key(parts[1].encode())
+        c1 = int(parts[2])
+
+    shared_key = Utils.diffie_hellman_key_exchange(state['a'], server_df_contribution)
+
+    state['stage'] = 3
+    state['a'] = None
+    state['key'] = shared_key
+    c2 = random.randint(1, 100)
+    state['c2'] = c2
+    state['c1'] = c1
+
+
+def send_packet(username):
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'SIGN-IN_3'
+    packet.username = username
+    iv = os.urandom(12)
+    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    to_be_sent = str(state['c1'] + 10) + '|' + str(state['c2'])
+    encrypted_text_to_be_sent = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    packet.encrypted_text = encrypted_text_to_be_sent
+    packet.iv = iv
+    packet.tag = encryptor.tag
+    return packet
+
+
+def listen_for_response(me, password):
     deser_resp = finduser_pb2.FindUser()
     while 1:
         response, address = s.recvfrom(1024)
@@ -66,7 +126,7 @@ def listen_for_response(me):
             else:
                 # Assemble all fragmented packets
                 save_fragments(deser_resp, address)
-        elif deser_resp['packet_type'] == 'INVALIDATE-CLIENT':
+        elif deser_resp.packet_type == 'INVALIDATE-CLIENT':
             sys.stdout.write('\n')
             flush()
             print('You have signed in from another window, exiting')
@@ -109,7 +169,6 @@ def fragment_message(message, me, msg_id):
     for message in message_fragments:
         seq += 1
         # have a seq no and count: no of fragments
-        # packet = {'packet_type': 'MESSAGE', 'sender': me, 'message': message, 'id': msg_id, 'seq': seq, 'count': count}
         packet = finduser_pb2.FindUser()
         packet.packet_type = 'MESSAGE'
         packet.sender = me
@@ -134,7 +193,6 @@ def handle_send_message(get_user, me):
     message_id = message_id + 1
     # send message if size less than 800 bytes
     if len(message) < 800:
-        # message_obj = {'packet_type': 'MESSAGE', 'sender': me, 'message': message, 'id': message_id, 'seq': 0, 'count': 1}
         packet = finduser_pb2.FindUser()
         packet.packet_type = 'MESSAGE'
         packet.sender = me
@@ -142,14 +200,12 @@ def handle_send_message(get_user, me):
         packet.id = message_id
         packet.sequence = 0
         packet.count = 1
-        # message_dump = json.dumps(message_obj)
         s.sendto(packet.SerializeToString(), (u_ip, u_p))
     else:
         # Fragment packets after 800 bytes
         fragments = fragment_message(message, me, message_id)
         # Send all the fragments
         for f in fragments:
-            # message_dump = json.dumps(f)
             s.sendto(f.SerializeToString(), (u_ip, u_p))
 
 
@@ -169,11 +225,6 @@ def find_user(inp, server_ip, server_port, packet):
     splits = inp.split(' ')
     username = splits[1]
     message = ' '.join(splits[2:])
-    # find_user_json = {
-    #     'packet_type': 'FIND-USER',
-    #     'username': username
-    # }
-    # find_user_packet = json.dumps(find_user_json)
     packet.packet_type = 'FIND-USER'
     packet.username = username
     # Save messages in buffer where value is a deque
@@ -192,26 +243,50 @@ def timeout_signal(signal_number, frame):
     sys.exit(0)
 
 
+def signin(username, password):
+    dh_public, dh_private = Utils.diffie_hellman_key_generation()
+    signin_packet = finduser_pb2.FindUser()
+    signin_packet.packet_type = 'SIGN-IN_1'
+    signin_packet.username = username
+    salt = 'secureIM' + username
+    hashed_pwd = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000, 32)
+    iv = os.urandom(12)
+    cipher = Cipher(algorithms.AES(hashed_pwd), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    df_contribution = dh_public
+    x = df_contribution.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    cipher_text = encryptor.update(x) + encryptor.finalize()
+    signin_packet.encrypted_text = cipher_text
+    signin_packet.iv = iv
+    signin_packet.tag = encryptor.tag
+    return signin_packet, dh_private
+
+
+def check_challenge_validity(packet):
+    iv = packet.iv
+    tag = packet.tag
+    encrypted_text = packet.encrypted_text
+    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv, tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    if state['c2'] != int(decrypted_text.decode()) - 10:
+        sys.exit(0)
+
 def main():
     # command line args - username, server ip, server port
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--username',required=True, help='username')
+    parser.add_argument('-p', '--password',required=True, help='password')
     parser.add_argument('-sip', '--server_ip',required=True, help='server ip address')
     parser.add_argument('-sp', '--server_port', required=True, type=int, help='server port')
     args = parser.parse_args()
     username = args.username
+    password = args.password
     server_ip = args.server_ip
     server_port = int(args.server_port)
-    # signin_json = {
-    #     'packet_type': 'SIGN-IN',
-    #     'username': username
-    # }
-    # list_json = {'packet_type': 'LIST'}
-    # signin_packet = json.dumps(signin_json)
-    # list_packet = json.dumps(list_json)
-    signin_packet = finduser_pb2.FindUser()
-    signin_packet.packet_type = 'SIGN-IN'
-    signin_packet.username = username
+
+    signin_packet, a = signin(username, password)
+    update_state(a, 1)
 
     # send sign-in packet to server
     s.sendto(signin_packet.SerializeToString(), (server_ip, server_port))
@@ -221,15 +296,34 @@ def main():
     signin_response, address = s.recvfrom(1024)
     signin_packet.ParseFromString(signin_response)
     signal.alarm(0)
-    if signin_packet.packet_type == "FAILURE":
-        print("User is already active, could not signin.")
-        return
-    elif signin_packet.packet_type != "SUCCESS":
+    if signin_packet.packet_type == 'SIGN-IN_2':
+        establish_key(signin_packet, username, password)
+        s.sendto(send_packet(username).SerializeToString(), (server_ip, server_port))
+    elif signin_packet.packet_type == "FAILURE":
         print("Error: Could not signin")
         return
+    elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
+        sys.stdout.write('\n')
+        flush()
+        print('You have signed in from another window, exiting')
+        os._exit(1)
+
+    signin_response, address = s.recvfrom(1024)
+    signin_packet.ParseFromString(signin_response)
+    signal.alarm(0)
+    if signin_packet.packet_type == 'SIGN-IN_4':
+        check_challenge_validity(signin_packet)
+    if signin_packet.packet_type == "FAILURE":
+        print("Error: Could not signin")
+        return
+    elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
+        sys.stdout.write('\n')
+        flush()
+        print('You have signed in from another window, exiting')
+        os._exit(1)
 
     # Start a thread to listen for responses
-    t = threading.Thread(target=listen_for_response, args=(username,))
+    t = threading.Thread(target=listen_for_response, args=(username,password,))
     t.daemon = True
     t.start()
 
