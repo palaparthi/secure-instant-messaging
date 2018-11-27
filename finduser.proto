@@ -19,9 +19,9 @@ message FindUser {
     optional int32 count = 20;
 
     // login auth
-    optional bytes encrypted_text = 21;
-    optional bytes iv = 22;
-    optional bytes tag = 23;
+    optional bytes encrypted_text = 11;
+    optional bytes iv = 12;
+    optional bytes tag = 13;
 
     // talk to another client
     optional string receiver = 4;

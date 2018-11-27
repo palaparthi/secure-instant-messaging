@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-# Client program for CS6700 ps1
-# Author: Sree Siva Sandeep Palaparthi
+# Client program for CS6700 project
+# Author: Sree Siva Sandeep Palaparthi, Nimisha Peddakam
 import hashlib
 import random
 import socket
@@ -142,18 +142,26 @@ def listen_for_response(me, password):
         elif deser_resp.packet_type == 'MESSAGE_5':
             handle_message_authentication_stage_5(deser_resp, address)
         elif deser_resp.packet_type == 'MESSAGE':
+            sender = reverse_lookup[address]
+            shared_key = message_state[sender]['shared-key']
+            # decrypt packet
+            cipher = Cipher(algorithms.AES(shared_key), modes.GCM(deser_resp.iv, deser_resp.tag), backend=default_backend())
+            decryptor = cipher.decryptor()
+            decrypted_text = decryptor.update(deser_resp.encrypted_text) + decryptor.finalize()
+            parts = decrypted_text.decode().split('|')
+
             # Receive message from client
-            if deser_resp.count == 1:
+            if parts[4] == 1:
                 # If no of packets in 1 print the message
                 sys.stdout.write('\n')
                 flush()
-                full_message = deser_resp.message
-                sys.stdout.write('<From ' + str(address[0]) + ':' + str(address[1]) + ':' + deser_resp.sender + '>: ' + full_message + '\n')
+                full_message = parts[1]
+                sys.stdout.write('<From ' + str(address[0]) + ':' + str(address[1]) + ':' + parts[0] + '>: ' + full_message + '\n')
                 sys.stdout.write('+>')
                 sys.stdout.flush()
             else:
                 # Assemble all fragmented packets
-                save_fragments(deser_resp, address)
+                save_fragments(parts, address)
         elif deser_resp.packet_type == 'INVALIDATE-CLIENT':
             sys.stdout.write('\n')
             flush()
@@ -226,15 +234,22 @@ def handle_message_authentication_stage_4(received_packet, me, address):
     if len(message) < 800:
         packet = finduser_pb2.FindUser()
         packet.packet_type = 'MESSAGE'
-        packet.sender = me
-        packet.message = message
-        packet.id = message_id
-        packet.sequence = 0
-        packet.count = 1
+        to_be_encrypted = me + '|' + message + '|' + str(message_id) + '|' + str(0) + '|' + str(1)
+
+        # encrypt
+        iv_message = os.urandom(12)
+        cipher_message = Cipher(algorithms.AES(shared_key), modes.GCM(iv_message), backend=default_backend())
+        encryptor_message = cipher_message.encryptor()
+        cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+
+        packet.encrypted_text = cipher_message
+        packet.iv = iv_message
+        packet.tag = encryptor_message.tag
+
         s.sendto(packet.SerializeToString(), address)
     else:
         # Fragment packets after 800 bytes
-        fragments = fragment_message(message, me, message_id)
+        fragments = fragment_message(message, me, message_id, shared_key)
         # Send all the fragments
         for f in fragments:
             s.sendto(f.SerializeToString(), address)
@@ -387,30 +402,30 @@ def handle_message_authentication_stage_1(received_packet, address):
 
 # Save all the fragments of a single message
 def save_fragments(response, address):
-    msg_id = response.id
-    sender = response.sender
+    msg_id = response[2]
+    sender = response[0]
     uniq_tuple = (msg_id, sender)
     # save fragments in buffer
     if uniq_tuple not in fragment_buffer:
         # create list with None
-        tmp = [None] * response.count
+        tmp = [None] * int(response[4])
     else:
         tmp = fragment_buffer[uniq_tuple]
-    tmp[response.sequence - 1] = response.message
+    tmp[int(response[3]) - 1] = response[1]
     fragment_buffer[uniq_tuple] = tmp
 
     # If all the fragments have arrived print the message
     if None not in fragment_buffer[uniq_tuple]:
         final_message = fragment_buffer[uniq_tuple]
         full_message = ''.join(final_message)
-        sys.stdout.write('\n<- <From ' + str(address[0]) + ':' + str(address[1]) + ':' + response.sender + '>: ' + full_message + '\n')
+        sys.stdout.write('\n<- <From ' + str(address[0]) + ':' + str(address[1]) + ':' + response[0] + '>: ' + full_message + '\n')
         del fragment_buffer[uniq_tuple]
         sys.stdout.write('+>')
         sys.stdout.flush()
 
 
 # Return list of all fragments of a message
-def fragment_message(message, me, msg_id):
+def fragment_message(message, me, msg_id, shared_key):
     # Chunk every 800 bytes
     message_fragments = [message[i:i+800] for i in range(0, len(message), 800)]
     fragment_list = []
@@ -421,11 +436,18 @@ def fragment_message(message, me, msg_id):
         # have a seq no and count: no of fragments
         packet = finduser_pb2.FindUser()
         packet.packet_type = 'MESSAGE'
-        packet.sender = me
-        packet.message = message
-        packet.id = msg_id
-        packet.sequence = seq
-        packet.count = count
+
+        to_be_encrypted = me + '|' + message + '|' + str(msg_id) + '|' + str(seq) + '|' + str(count)
+
+        # encrypt
+        iv_message = os.urandom(12)
+        cipher_message = Cipher(algorithms.AES(shared_key), modes.GCM(iv_message), backend=default_backend())
+        encryptor_message = cipher_message.encryptor()
+        cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+
+        packet.encrypted_text = cipher_message
+        packet.iv = iv_message
+        packet.tag = encryptor_message.tag
         fragment_list.append(packet)
     return fragment_list
 
@@ -526,11 +548,20 @@ def check_if_shared_key_exists(inp, username, packet):
         # send message if size less than 800 bytes
         if len(message) < 800:
             packet.packet_type = 'MESSAGE'
-            packet.sender = username
-            packet.message = message
-            packet.id = message_id
-            packet.sequence = 0
-            packet.count = 1
+
+            to_be_encrypted = username + '|' + message + '|' + str(message_id) + '|' + str(0) + '|' + str(1)
+
+            # encrypt
+            iv_message = os.urandom(12)
+            cipher_message = Cipher(algorithms.AES(message_state[receiver]['shared-key']), modes.GCM(iv_message), backend=default_backend())
+            encryptor_message = cipher_message.encryptor()
+            cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+
+            packet.encrypted_text = cipher_message
+            packet.iv = iv_message
+            packet.tag = encryptor_message.tag
+
+
             s.sendto(packet.SerializeToString(), address)
         else:
             # Fragment packets after 800 bytes
