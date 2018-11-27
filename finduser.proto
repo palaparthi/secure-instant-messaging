@@ -22,4 +22,11 @@ message FindUser {
     optional bytes encrypted_text = 21;
     optional bytes iv = 22;
     optional bytes tag = 23;
+
+    // talk to another client
+    optional string receiver = 4;
+    optional int32 nonce = 6;
+    optional bytes receiver_iv = 8;
+    optional bytes receiver_tag = 9;
+    optional bytes ticket_receiver = 10;
 }

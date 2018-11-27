@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='messaging',
   syntax='proto2',
   serialized_options=None,
-  serialized_pb=_b('\n\x0e\x66induser.proto\x12\tmessaging\"\xc7\x01\n\x08\x46indUser\x12\x13\n\x0bpacket_type\x18\x01 \x02(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x15\n\rlist_of_users\x18\x05 \x01(\t\x12\x0e\n\x06sender\x18\x10 \x01(\t\x12\x0f\n\x07message\x18\x11 \x01(\t\x12\n\n\x02id\x18\x12 \x01(\x05\x12\x10\n\x08sequence\x18\x13 \x01(\x05\x12\r\n\x05\x63ount\x18\x14 \x01(\x05\x12\x16\n\x0e\x65ncrypted_text\x18\x15 \x01(\x0c\x12\n\n\x02iv\x18\x16 \x01(\x0c\x12\x0b\n\x03tag\x18\x17 \x01(\x0c')
+  serialized_pb=_b('\n\x0e\x66induser.proto\x12\tmessaging\"\xac\x02\n\x08\x46indUser\x12\x13\n\x0bpacket_type\x18\x01 \x02(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x15\n\rlist_of_users\x18\x05 \x01(\t\x12\x0e\n\x06sender\x18\x10 \x01(\t\x12\x0f\n\x07message\x18\x11 \x01(\t\x12\n\n\x02id\x18\x12 \x01(\x05\x12\x10\n\x08sequence\x18\x13 \x01(\x05\x12\r\n\x05\x63ount\x18\x14 \x01(\x05\x12\x16\n\x0e\x65ncrypted_text\x18\x15 \x01(\x0c\x12\n\n\x02iv\x18\x16 \x01(\x0c\x12\x0b\n\x03tag\x18\x17 \x01(\x0c\x12\x10\n\x08receiver\x18\x04 \x01(\t\x12\r\n\x05nonce\x18\x06 \x01(\x05\x12\x13\n\x0breceiver_iv\x18\x08 \x01(\x0c\x12\x14\n\x0creceiver_tag\x18\t \x01(\x0c\x12\x17\n\x0fticket_receiver\x18\n \x01(\x0c')
 )
 
 
@@ -109,6 +109,41 @@ _FINDUSER = _descriptor.Descriptor(
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='receiver', full_name='messaging.FindUser.receiver', index=11,
+      number=4, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b("").decode('utf-8'),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='nonce', full_name='messaging.FindUser.nonce', index=12,
+      number=6, type=5, cpp_type=1, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='receiver_iv', full_name='messaging.FindUser.receiver_iv', index=13,
+      number=8, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b(""),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='receiver_tag', full_name='messaging.FindUser.receiver_tag', index=14,
+      number=9, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b(""),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
+    _descriptor.FieldDescriptor(
+      name='ticket_receiver', full_name='messaging.FindUser.ticket_receiver', index=15,
+      number=10, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=_b(""),
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR),
   ],
   extensions=[
   ],
@@ -122,7 +157,7 @@ _FINDUSER = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=30,
-  serialized_end=229,
+  serialized_end=330,
 )
 
 DESCRIPTOR.message_types_by_name['FindUser'] = _FINDUSER

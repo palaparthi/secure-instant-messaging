@@ -7,6 +7,7 @@ import random
 import socket
 import argparse
 import os
+import datetime
 
 import binascii
 
@@ -27,6 +28,11 @@ message_buffer = {}
 fragment_buffer = {}
 message_id = 0
 state = {}
+list_state = {}
+message_state = {}
+time_diff = 120
+reverse_lookup = {}
+forward_lookup = {}
 
 # username should not be more than 20 characters
 
@@ -96,6 +102,20 @@ def send_packet(username):
     return packet
 
 
+def check_validity_list_result(packet):
+    key = state['key']
+    iv = packet.iv
+    tag = packet.tag
+    encrypted_text = packet.encrypted_text
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    parts = decrypted_text.decode().split('|')
+    if list_state['nonce'] == int(parts[0]) - 1:
+        flush()
+        print('Signed In Users: ' + parts[1])
+
+
 def listen_for_response(me, password):
     deser_resp = finduser_pb2.FindUser()
     while 1:
@@ -103,9 +123,7 @@ def listen_for_response(me, password):
         deser_resp.ParseFromString(response)
         if deser_resp.packet_type == 'LIST-RESULT':
             # List of all signed in users
-            user_list = deser_resp.list_of_users
-            flush()
-            print('Signed In Users: ' + user_list)
+            check_validity_list_result(deser_resp)
         elif deser_resp.packet_type == 'USER-RESULT':
             try:
                 # User configuration to whom we need to send message
@@ -113,6 +131,16 @@ def listen_for_response(me, password):
                 handle_send_message(user, me)
             except:
                 print('User does not exist')
+        elif deser_resp.packet_type == 'MESSAGE_1':
+            handle_message_authentication_stage_1(deser_resp, address)
+        elif deser_resp.packet_type == 'MESSAGE_2':
+            handle_message_authentication_stage_2(deser_resp, address)
+        elif deser_resp.packet_type == 'MESSAGE_3':
+            handle_message_authentication_stage_3(deser_resp, address)
+        elif deser_resp.packet_type == 'MESSAGE_4':
+            handle_message_authentication_stage_4(deser_resp, me, address)
+        elif deser_resp.packet_type == 'MESSAGE_5':
+            handle_message_authentication_stage_5(deser_resp, address)
         elif deser_resp.packet_type == 'MESSAGE':
             # Receive message from client
             if deser_resp.count == 1:
@@ -133,6 +161,228 @@ def listen_for_response(me, password):
             os._exit(1)
         deser_resp.Clear()
     s.close()
+
+
+def handle_message_authentication_stage_5(received_packet, address):
+    encrypted_text = received_packet.encrypted_text
+    sender = reverse_lookup[address]
+    shared_key = message_state[sender]['shared-key']
+
+    # decrypt
+    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag),
+                    backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+
+    # check if the nonce is valid
+    if int(decrypted_text.decode()) != message_state[sender]['nonce'] - 1:
+        return
+
+
+def handle_message_authentication_stage_4(received_packet, me, address):
+    global message_id
+    encrypted_text = received_packet.encrypted_text
+    sender = reverse_lookup[address]
+    shared_key = message_state[sender]['shared-key']
+
+    # decrypt
+    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+
+    parts = decrypted_text.decode().split('|')
+
+    # check if the nonce is valid
+    if int(parts[0]) != message_state[sender]['nonce'] - 1:
+        return
+
+    received_nonce = int(parts[1])
+    received_nonce -= 1
+
+    # build packet to be sent
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'MESSAGE_5'
+
+    iv = os.urandom(12)
+    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher_encrypt.encryptor()
+    to_be_sent = str(received_nonce)
+    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+
+    packet.encrypted_text = cipher_text
+    packet.iv = iv
+    packet.tag = encryptor.tag
+
+    s.sendto(packet.SerializeToString(), address)
+
+    time.sleep(1)
+
+    message = message_buffer[sender].popleft()
+    # Reset message id after 100000
+    if message_id > 100000:
+        message_id = 0
+    message_id = message_id + 1
+    # send message if size less than 800 bytes
+    if len(message) < 800:
+        packet = finduser_pb2.FindUser()
+        packet.packet_type = 'MESSAGE'
+        packet.sender = me
+        packet.message = message
+        packet.id = message_id
+        packet.sequence = 0
+        packet.count = 1
+        s.sendto(packet.SerializeToString(), address)
+    else:
+        # Fragment packets after 800 bytes
+        fragments = fragment_message(message, me, message_id)
+        # Send all the fragments
+        for f in fragments:
+            s.sendto(f.SerializeToString(), address)
+
+
+def handle_message_authentication_stage_3(received_packet, address):
+    encrypted_text = received_packet.encrypted_text
+    sender = reverse_lookup[address]
+    shared_key = message_state[sender]['shared-key']
+
+    # decrypt
+    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+
+    received_nonce = int(decrypted_text.decode())
+    received_nonce -= 1
+    nonce = random.randint(10000, 1000000)
+    message_state[sender]['nonce'] = nonce
+
+    # build packet to be sent
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'MESSAGE_4'
+
+    iv = os.urandom(12)
+    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher_encrypt.encryptor()
+    to_be_sent = str(received_nonce) + '|' + str(nonce)
+    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+
+    packet.encrypted_text = cipher_text
+    packet.iv = iv
+    packet.tag = encryptor.tag
+
+    s.sendto(packet.SerializeToString(), address)
+
+
+def handle_message_authentication_stage_2(received_packet, address):
+    encrypted_text = received_packet.encrypted_text
+    receiver = reverse_lookup[address]
+    shared_secret = message_state[receiver]['shared-secret']
+
+    # decrypt
+    cipher = Cipher(algorithms.AES(shared_secret), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+
+    parts = decrypted_text.decode().split('|')
+
+    # check the freshness using timestamp received
+    received_timestamp = datetime.datetime.strptime(parts[0], "%Y-%m-%d %H:%M:%S.%f")
+    if (message_state[receiver]['timestamp'] - received_timestamp).total_seconds() > time_diff:
+        return
+
+    # save shared-key
+    received_key = binascii.unhexlify(parts[1].encode('ascii'))
+
+    # compute shared key with the receiver
+    shared_key = Utils.diffie_hellman_key_exchange(message_state[receiver]['my_dh_key'], load_dh_public_key(received_key))
+
+    # update state
+    message_state[receiver]['timestamp'] = None
+    message_state[receiver]['my_dh_key'] = None
+    message_state[receiver]['shared-secret'] = None
+    message_state[receiver]['shared-key'] = shared_key
+    message_state[receiver]['nonce'] = random.randint(10000, 1000000)
+
+    # build packet to be sent
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'MESSAGE_3'
+
+    iv = os.urandom(12)
+    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher_encrypt.encryptor()
+    cipher_text = encryptor.update(str(message_state[receiver]['nonce']).encode()) + encryptor.finalize()
+
+    packet.encrypted_text = cipher_text
+    packet.iv = iv
+    packet.tag = encryptor.tag
+
+    s.sendto(packet.SerializeToString(), address)
+
+
+def handle_message_authentication_stage_1(received_packet, address):
+    ticket = received_packet.ticket_receiver
+    iv_receiver = received_packet.receiver_iv
+    tag_receiver = received_packet.receiver_tag
+
+    # decrypt ticket using key with server
+    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv_receiver, tag_receiver), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(ticket) + decryptor.finalize()
+
+    parts = decrypted_text.decode().split('|')
+    shared_secret = binascii.unhexlify(parts[0].encode('ascii'))
+    sender = parts[1]
+
+    encrypted_text = received_packet.encrypted_text
+    iv = received_packet.iv
+    tag = received_packet.tag
+
+    # decrypt using shared_secret
+    cipher_shared = Cipher(algorithms.AES(shared_secret), modes.GCM(iv, tag), backend=default_backend())
+    decryptor_shared = cipher_shared.decryptor()
+    decrypted_text = decryptor_shared.update(encrypted_text) + decryptor_shared.finalize()
+
+    parts_shared = decrypted_text.decode().split('|')
+    # check the freshness using timestamp received
+    received_timestamp = datetime.datetime.strptime(parts_shared[1], "%Y-%m-%d %H:%M:%S.%f")
+    if (datetime.datetime.now() - received_timestamp).total_seconds() > time_diff:
+        return
+
+    # compute shared key with the sender
+    received_key = binascii.unhexlify(parts_shared[0].encode('ascii'))
+    dh_public, dh_private = Utils.diffie_hellman_key_generation()
+
+    shared_key = Utils.diffie_hellman_key_exchange(dh_private, load_dh_public_key(received_key))
+
+    # update_state
+    if sender not in message_state:
+        message_state[sender] = {}
+    message_state[sender]['shared-key'] = shared_key
+
+    # build packet to send
+    packet_to_send = finduser_pb2.FindUser()
+    packet_to_send.packet_type = 'MESSAGE_2'
+
+    df_public_bytes = dh_public.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+
+    to_be_sent = str(datetime.datetime.now()) + '|' + binascii.hexlify(df_public_bytes).decode('ascii')
+
+    # encrypt
+    iv_to_be_sent = os.urandom(12)
+    cipher_encrypt = Cipher(algorithms.AES(shared_secret), modes.GCM(iv_to_be_sent), backend=default_backend())
+    encryptor = cipher_encrypt.encryptor()
+    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+
+    packet_to_send.encrypted_text = cipher_text
+    packet_to_send.iv = iv_to_be_sent
+    packet_to_send.tag = encryptor.tag
+
+    if address not in reverse_lookup:
+        reverse_lookup[address] = sender
+
+    if sender not in forward_lookup:
+        forward_lookup[sender] = address
+
+    s.sendto(packet_to_send.SerializeToString(), address)
 
 
 # Save all the fragments of a single message
@@ -183,30 +433,72 @@ def fragment_message(message, me, msg_id):
 # Send message client to client
 def handle_send_message(get_user, me):
     global message_id
-    username = get_user.username
-    u_ip = get_user.ipaddress
-    u_p = get_user.port
-    message = message_buffer[username].popleft()
-    # Reset message id after 100000
-    if message_id > 100000:
-        message_id = 0
-    message_id = message_id + 1
-    # send message if size less than 800 bytes
-    if len(message) < 800:
-        packet = finduser_pb2.FindUser()
-        packet.packet_type = 'MESSAGE'
-        packet.sender = me
-        packet.message = message
-        packet.id = message_id
-        packet.sequence = 0
-        packet.count = 1
-        s.sendto(packet.SerializeToString(), (u_ip, u_p))
-    else:
-        # Fragment packets after 800 bytes
-        fragments = fragment_message(message, me, message_id)
-        # Send all the fragments
-        for f in fragments:
-            s.sendto(f.SerializeToString(), (u_ip, u_p))
+
+    received_packet = get_user
+    iv = received_packet.iv
+    tag = received_packet.tag
+    iv_for_receiver = received_packet.receiver_iv
+    tag_for_receiver = received_packet.receiver_tag
+
+    # decrypt received packet
+    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv, tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(received_packet.encrypted_text) + decryptor.finalize()
+    parts = decrypted_text.decode().split('|')
+
+    nonce = int(parts[0])
+    receiver = parts[1]
+
+    if nonce != message_state[receiver]['server-nonce'] + 1:
+        return
+
+    shared_secret = binascii.unhexlify(parts[2].encode('ascii'))
+    ticket_to_receiver = binascii.unhexlify(parts[3].encode('ascii'))
+
+    # update state
+    message_state[receiver]['server-nonce'] = None
+    message_state[receiver]['timestamp'] = datetime.datetime.now()
+    message_state[receiver]['shared-secret'] = shared_secret
+
+    # generate dh key to exchange with receiver
+    dh_public, dh_private = Utils.diffie_hellman_key_generation()
+
+    message_state[receiver]['my_dh_key'] = dh_private
+
+    # build the packet to be sent to the receiver
+    packet_to_be_sent = finduser_pb2.FindUser()
+    packet_to_be_sent.packet_type = 'MESSAGE_1'
+    packet_to_be_sent.ticket_receiver = ticket_to_receiver
+
+    df_public_bytes = dh_public.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+
+    to_be_encrypted = binascii.hexlify(df_public_bytes).decode('ascii') + '|' + str(message_state[receiver]['timestamp'])
+
+    iv_to_be_sent = os.urandom(12)
+    cipher = Cipher(algorithms.AES(shared_secret), modes.GCM(iv_to_be_sent), backend=default_backend())
+    encryptor = cipher.encryptor()
+    cipher_text = encryptor.update(to_be_encrypted.encode()) + encryptor.finalize()
+
+    packet_to_be_sent.encrypted_text = cipher_text
+    packet_to_be_sent.iv = iv_to_be_sent
+    packet_to_be_sent.tag = encryptor.tag
+    packet_to_be_sent.receiver_iv = iv_for_receiver
+    packet_to_be_sent.receiver_tag = tag_for_receiver
+
+    # get receiver's ip address and port
+
+    receiver_ip_address = parts[4]
+    receiver_port = int(parts[5])
+
+    address = (receiver_ip_address, receiver_port)
+    # add entry in reverse lookup
+    if address not in reverse_lookup:
+        reverse_lookup[(receiver_ip_address, receiver_port)] = receiver
+
+    if receiver not in forward_lookup:
+        forward_lookup[receiver] = (receiver_ip_address, receiver_port)
+
+    s.sendto(packet_to_be_sent.SerializeToString(), (receiver_ip_address, receiver_port))
 
 
 # Find the type of packet based on user input
@@ -220,20 +512,55 @@ def find_input_type(inp):
         return 'noop'
 
 
-# find user configuration from server to whom we need to send message
-def find_user(inp, server_ip, server_port, packet):
+def check_if_shared_key_exists(inp, username, packet):
+    global message_id
+    # check if shared key exists
     splits = inp.split(' ')
-    username = splits[1]
+    receiver = splits[1]
+    message = ' '.join(splits[2:])
+    if receiver in message_state and message_state[receiver]['shared-key'] is not None:
+        address = forward_lookup[receiver]
+        if message_id > 100000:
+            message_id = 0
+        message_id = message_id + 1
+        # send message if size less than 800 bytes
+        if len(message) < 800:
+            packet.packet_type = 'MESSAGE'
+            packet.sender = username
+            packet.message = message
+            packet.id = message_id
+            packet.sequence = 0
+            packet.count = 1
+            s.sendto(packet.SerializeToString(), address)
+        else:
+            # Fragment packets after 800 bytes
+            fragments = fragment_message(message, username, message_id)
+            # Send all the fragments
+            for f in fragments:
+                s.sendto(f.SerializeToString(), address)
+        return True
+    return False
+
+
+# find user configuration from server to whom we need to send message
+def find_user(inp, server_ip, server_port, username, packet):
+    splits = inp.split(' ')
+    receiver = splits[1]
     message = ' '.join(splits[2:])
     packet.packet_type = 'FIND-USER'
     packet.username = username
+    packet.receiver = receiver
+    packet.nonce = random.randint(10000, 10000000)
+    if receiver not in message_state:
+        message_state[receiver] = {}
+        message_state[receiver]['server-nonce'] = packet.nonce
     # Save messages in buffer where value is a deque
-    if username in message_buffer:
-        message_buffer[username].append(message)
+    if receiver in message_buffer:
+        message_buffer[receiver].append(message)
     else:
         # Deque required to save multiple fast messages from user
-        message_buffer[username] = collections.deque([])
-        message_buffer[username].append(message)
+        message_buffer[receiver] = collections.deque([])
+        message_buffer[receiver].append(message)
     s.sendto(packet.SerializeToString(), (server_ip, server_port))
 
 
@@ -254,8 +581,8 @@ def signin(username, password):
     cipher = Cipher(algorithms.AES(hashed_pwd), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     df_contribution = dh_public
-    x = df_contribution.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
-    cipher_text = encryptor.update(x) + encryptor.finalize()
+    df_contribution_bytes = df_contribution.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    cipher_text = encryptor.update(df_contribution_bytes) + encryptor.finalize()
     signin_packet.encrypted_text = cipher_text
     signin_packet.iv = iv
     signin_packet.tag = encryptor.tag
@@ -271,6 +598,24 @@ def check_challenge_validity(packet):
     decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
     if state['c2'] != int(decrypted_text.decode()) - 10:
         sys.exit(0)
+
+
+def build_list_packet(username):
+    key = state['key']
+    list_state['nonce'] = random.randint(10000, 10000000)
+    to_be_sent = str(list_state['nonce'])
+    iv = os.urandom(12)
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    encrypted_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'LIST'
+    packet.encrypted_text = encrypted_text
+    packet.iv = iv
+    packet.tag = encryptor.tag
+    packet.username = username
+    return packet
+
 
 def main():
     # command line args - username, server ip, server port
@@ -332,11 +677,12 @@ def main():
         inp = input("+>")
         input_type = find_input_type(inp)
         if input_type == 'list':
-            packet.packet_type = 'LIST'
+            packet = build_list_packet(username)
             # send list packet to server
             s.sendto(packet.SerializeToString(), (server_ip, server_port))
         elif input_type == 'send':
-            find_user(inp, server_ip, server_port, packet)
+            if not check_if_shared_key_exists(inp, username, packet):
+                find_user(inp, server_ip, server_port, username, packet)
         else:
             print('Please enter the appropriate command, help: [list, send username message]')
         packet.Clear()
