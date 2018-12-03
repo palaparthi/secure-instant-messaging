@@ -14,7 +14,9 @@ import socket
 import argparse
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key, Encoding, PublicFormat
-
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives.asymmetric import padding
 import finduser_pb2
 import Utils
 import collections
@@ -77,10 +79,27 @@ def load_dh_public_key(pem):
     return key
 
 
-# Handle user signin
-def handle_signin(data, address):
+# decrypt the cipher text with destination private key and return the text
+def rsa_decrypt(private_key, cipher_text):
     try:
-        username = data.username
+        plain_text = private_key.decrypt(
+            cipher_text,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None))
+    except Exception as e:
+        print('Error logging in the client')
+    return plain_text
+
+
+# Handle user signin
+def handle_signin(private_key, data, address):
+    try:
+        # verify username before decrypting
+
+
+        username = rsa_decrypt(private_key, data.encrypted_username).decode()
         client_df_contribution = data.encrypted_text
         client_iv = data.iv
         client_tag = data.tag
@@ -94,7 +113,7 @@ def handle_signin(data, address):
             return sign_in_packet
         dh_public, dh_private = Utils.diffie_hellman_key_generation()
     except:
-        print('Error in signin')
+        print('Error logging in the client')
 
     shared_key = Utils.diffie_hellman_key_exchange(dh_private, load_dh_public_key(client_df))
 
@@ -259,11 +278,33 @@ def find_user(data, address):
         return create_no_user_packet(nonce, key, receiver)
 
 
+# load private key from path, if invalid file exit
+def load_rsa_private_key(path):
+    try:
+        with open(path, "rb") as key_file:
+            sen_prv_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend())
+    except:
+        try:
+            with open(path, "rb") as key_file:
+                sen_prv_key = serialization.load_der_private_key(
+                    key_file.read(),
+                    password=None,
+                    backend=default_backend())
+        except:
+            print('Please make sure that the correct private key file is available')
+    return sen_prv_key
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-sp', '--port', type=int, help='port to bind server', required=True)
     args = parser.parse_args()
     port = int(args.port)
+
+    private_key = load_rsa_private_key('private_key.der')
 
     try:
         # Bind to port
@@ -281,7 +322,7 @@ def main():
         packet_type = find_packet_type(data_decode)
         if packet_type == 'SIGN-IN_1':
             # Client initial signin handle
-            sign_in_packet = handle_signin(data_decode, address)
+            sign_in_packet = handle_signin(private_key, data_decode, address)
             s.sendto(sign_in_packet.SerializeToString(), (address[0], address[1]))
         elif packet_type == 'SIGN-IN_3':
             data_to_send = check_challenge_validity_and_send_response(data_decode, address)

@@ -13,6 +13,7 @@ import binascii
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 import sys
 import threading
 import time
@@ -22,7 +23,8 @@ import json
 import getpass
 
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
-
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes, hmac
 import Utils
 import finduser_pb2
 
@@ -625,14 +627,54 @@ def timeout_signal(signal_number, frame):
     sys.exit(0)
 
 
+# load public key from path, if invalid file exit
+def load_rsa_public_key(path):
+    try:
+        with open(path, "rb") as key_file:
+            dest_pub_key = serialization.load_pem_public_key(
+                key_file.read(),
+                backend=default_backend())
+    except:
+        try:
+            with open(path, "rb") as key_file:
+                dest_pub_key = serialization.load_der_public_key(
+                    key_file.read(),
+                    backend=default_backend())
+        except:
+            print('Please make sure that the public/private key files are in either pem or der format')
+            sys.exit(0)
+    return dest_pub_key
+
+
+# encrypt the message with destination public key and return the cipher
+def rsa_encrypt(dest_pub_key, message):
+    try:
+        cipher_text = dest_pub_key.encrypt(
+            message,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None))
+    except Exception as e:
+        print('Error logging in', e)
+        sys.exit(0)
+    return cipher_text
+
+
 def signin(username, password):
     try:
         dh_public, dh_private = Utils.diffie_hellman_key_generation()
         signin_packet = finduser_pb2.FindUser()
         signin_packet.packet_type = 'SIGN-IN_1'
-        signin_packet.username = username
+
+        dest_pub_key = load_rsa_public_key('public_key.der')
+        encrypted_username = rsa_encrypt(dest_pub_key, username.encode())
+
+        signin_packet.encrypted_username = encrypted_username
+
         salt = 'secureIM' + username
         hashed_pwd = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000, 32)
+
         iv = os.urandom(12)
         cipher = Cipher(algorithms.AES(hashed_pwd), modes.GCM(iv), backend=default_backend())
         encryptor = cipher.encryptor()
@@ -643,7 +685,7 @@ def signin(username, password):
         signin_packet.iv = iv
         signin_packet.tag = encryptor.tag
         return signin_packet, dh_private
-    except:
+    except Exception:
         print('Error when signing in')
         os._exit(1)
 
@@ -728,8 +770,11 @@ def read_server_configuration():
 
 def main():
     server_ip, server_port = read_server_configuration()
-    username = input('Enter username\n')
-    password = getpass.getpass('Enter password\n')
+    # username = input('Enter username\n')
+    # password = getpass.getpass('Enter password\n')
+
+    username = sys.argv[1]
+    password = sys.argv[2]
 
     # check if username and password are not empty
     if username == '' or password == '' or username is None or password is None:

@@ -29,4 +29,8 @@ message FindUser {
     optional bytes receiver_iv = 8;
     optional bytes receiver_tag = 9;
     optional bytes ticket_receiver = 10;
+
+    // identity hiding for sign in message
+    optional bytes encrypted_username = 14;
+    optional bytes hmac_username = 15;
 }
