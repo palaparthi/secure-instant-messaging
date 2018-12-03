@@ -67,10 +67,9 @@ def establish_key(packet, username, password):
     encrypted_text = packet.encrypted_text
     salt = 'secureIM' + username
     hashed_pwd = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000, 32)
-    cipher = Cipher(algorithms.AES(hashed_pwd), modes.GCM(packet.iv, packet.tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
-    parts = decrypted_text.decode().split('|')
+    decrypted_text = aes_gcm_decrypt(hashed_pwd, encrypted_text, packet.iv, packet.tag)
+
+    parts = decrypted_text.split('|')
     server_df_contribution = 0
     c1 = 0
     if username == parts[0]:
@@ -92,10 +91,8 @@ def send_packet(username):
     packet.packet_type = 'SIGN-IN_3'
     packet.username = username
     iv = os.urandom(12)
-    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
     to_be_sent = str(state['c1'] + 10) + '|' + str(state['c2'])
-    encrypted_text_to_be_sent = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    encrypted_text_to_be_sent, iv, encryptor = aes_gcm_encrypt(state['key'], to_be_sent)
     packet.encrypted_text = encrypted_text_to_be_sent
     packet.iv = iv
     packet.tag = encryptor.tag
@@ -107,10 +104,8 @@ def check_validity_list_result(packet):
     iv = packet.iv
     tag = packet.tag
     encrypted_text = packet.encrypted_text
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
-    parts = decrypted_text.decode().split('|')
+    decrypted_text = aes_gcm_decrypt(key, encrypted_text, iv, tag)
+    parts = decrypted_text.split('|')
     if list_state['nonce'] == int(parts[0]) - 1:
         flush()
         print('Signed In Users: ' + parts[1])
@@ -144,10 +139,8 @@ def listen_for_response(me, password):
             sender = reverse_lookup[address]
             shared_key = message_state[sender]['shared-key']
             # decrypt packet
-            cipher = Cipher(algorithms.AES(shared_key), modes.GCM(deser_resp.iv, deser_resp.tag), backend=default_backend())
-            decryptor = cipher.decryptor()
-            decrypted_text = decryptor.update(deser_resp.encrypted_text) + decryptor.finalize()
-            parts = decrypted_text.decode().split('|')
+            decrypted_text = aes_gcm_decrypt(shared_key, deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
+            parts = decrypted_text.split('|')
 
             # Receive message from client
             if parts[4] == 1:
@@ -176,13 +169,10 @@ def handle_message_authentication_stage_5(received_packet, address):
     shared_key = message_state[sender]['shared-key']
 
     # decrypt
-    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag),
-                    backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    decrypted_text = aes_gcm_decrypt(shared_key, encrypted_text, received_packet.iv, received_packet.tag)
 
     # check if the nonce is valid
-    if int(decrypted_text.decode()) != message_state[sender]['nonce'] - 1:
+    if int(decrypted_text) != message_state[sender]['nonce'] - 1:
         return
 
 
@@ -193,11 +183,9 @@ def handle_message_authentication_stage_4(received_packet, me, address):
     shared_key = message_state[sender]['shared-key']
 
     # decrypt
-    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    decrypted_text = aes_gcm_decrypt(shared_key, encrypted_text, received_packet.iv, received_packet.tag)
 
-    parts = decrypted_text.decode().split('|')
+    parts = decrypted_text.split('|')
 
     # check if the nonce is valid
     if int(parts[0]) != message_state[sender]['nonce'] - 1:
@@ -210,11 +198,8 @@ def handle_message_authentication_stage_4(received_packet, me, address):
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'MESSAGE_5'
 
-    iv = os.urandom(12)
-    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher_encrypt.encryptor()
     to_be_sent = str(received_nonce)
-    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    cipher_text, iv, encryptor = aes_gcm_encrypt(shared_key, to_be_sent)
 
     packet.encrypted_text = cipher_text
     packet.iv = iv
@@ -236,10 +221,7 @@ def handle_message_authentication_stage_4(received_packet, me, address):
         to_be_encrypted = me + '|' + message + '|' + str(message_id) + '|' + str(0) + '|' + str(1)
 
         # encrypt
-        iv_message = os.urandom(12)
-        cipher_message = Cipher(algorithms.AES(shared_key), modes.GCM(iv_message), backend=default_backend())
-        encryptor_message = cipher_message.encryptor()
-        cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+        cipher_message, iv_message, encryptor_message = aes_gcm_encrypt(shared_key, to_be_encrypted)
 
         packet.encrypted_text = cipher_message
         packet.iv = iv_message
@@ -260,11 +242,9 @@ def handle_message_authentication_stage_3(received_packet, address):
     shared_key = message_state[sender]['shared-key']
 
     # decrypt
-    cipher = Cipher(algorithms.AES(shared_key), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    decrypted_text = aes_gcm_decrypt(shared_key, encrypted_text, received_packet.iv, received_packet.tag)
 
-    received_nonce = int(decrypted_text.decode())
+    received_nonce = int(decrypted_text)
     received_nonce -= 1
     nonce = random.randint(10000, 1000000)
     message_state[sender]['nonce'] = nonce
@@ -273,11 +253,8 @@ def handle_message_authentication_stage_3(received_packet, address):
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'MESSAGE_4'
 
-    iv = os.urandom(12)
-    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher_encrypt.encryptor()
     to_be_sent = str(received_nonce) + '|' + str(nonce)
-    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    cipher_text, iv, encryptor = aes_gcm_encrypt(shared_key, to_be_sent)
 
     packet.encrypted_text = cipher_text
     packet.iv = iv
@@ -292,11 +269,9 @@ def handle_message_authentication_stage_2(received_packet, address):
     shared_secret = message_state[receiver]['shared-secret']
 
     # decrypt
-    cipher = Cipher(algorithms.AES(shared_secret), modes.GCM(received_packet.iv, received_packet.tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
+    decrypted_text = aes_gcm_decrypt(shared_secret, encrypted_text, received_packet.iv, received_packet.tag)
 
-    parts = decrypted_text.decode().split('|')
+    parts = decrypted_text.split('|')
 
     # check the freshness using timestamp received
     received_timestamp = datetime.datetime.strptime(parts[0], "%Y-%m-%d %H:%M:%S.%f")
@@ -320,10 +295,7 @@ def handle_message_authentication_stage_2(received_packet, address):
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'MESSAGE_3'
 
-    iv = os.urandom(12)
-    cipher_encrypt = Cipher(algorithms.AES(shared_key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher_encrypt.encryptor()
-    cipher_text = encryptor.update(str(message_state[receiver]['nonce']).encode()) + encryptor.finalize()
+    cipher_text, iv, encryptor = aes_gcm_encrypt(shared_key, str(message_state[receiver]['nonce']))
 
     packet.encrypted_text = cipher_text
     packet.iv = iv
@@ -338,11 +310,9 @@ def handle_message_authentication_stage_1(received_packet, address):
     tag_receiver = received_packet.receiver_tag
 
     # decrypt ticket using key with server
-    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv_receiver, tag_receiver), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(ticket) + decryptor.finalize()
+    decrypted_text = aes_gcm_decrypt(state['key'], ticket, iv_receiver, tag_receiver)
 
-    parts = decrypted_text.decode().split('|')
+    parts = decrypted_text.split('|')
     shared_secret = binascii.unhexlify(parts[0].encode('ascii'))
     sender = parts[1]
 
@@ -351,11 +321,9 @@ def handle_message_authentication_stage_1(received_packet, address):
     tag = received_packet.tag
 
     # decrypt using shared_secret
-    cipher_shared = Cipher(algorithms.AES(shared_secret), modes.GCM(iv, tag), backend=default_backend())
-    decryptor_shared = cipher_shared.decryptor()
-    decrypted_text = decryptor_shared.update(encrypted_text) + decryptor_shared.finalize()
+    decrypted_text = aes_gcm_decrypt(shared_secret, encrypted_text, iv, tag)
 
-    parts_shared = decrypted_text.decode().split('|')
+    parts_shared = decrypted_text.split('|')
     # check the freshness using timestamp received
     received_timestamp = datetime.datetime.strptime(parts_shared[1], "%Y-%m-%d %H:%M:%S.%f")
     if (datetime.datetime.now() - received_timestamp).total_seconds() > time_diff:
@@ -381,10 +349,7 @@ def handle_message_authentication_stage_1(received_packet, address):
     to_be_sent = str(datetime.datetime.now()) + '|' + binascii.hexlify(df_public_bytes).decode('ascii')
 
     # encrypt
-    iv_to_be_sent = os.urandom(12)
-    cipher_encrypt = Cipher(algorithms.AES(shared_secret), modes.GCM(iv_to_be_sent), backend=default_backend())
-    encryptor = cipher_encrypt.encryptor()
-    cipher_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    cipher_text, iv_to_be_sent, encryptor = aes_gcm_encrypt(shared_secret, to_be_sent)
 
     packet_to_send.encrypted_text = cipher_text
     packet_to_send.iv = iv_to_be_sent
@@ -439,10 +404,7 @@ def fragment_message(message, me, msg_id, shared_key):
         to_be_encrypted = me + '|' + message + '|' + str(msg_id) + '|' + str(seq) + '|' + str(count)
 
         # encrypt
-        iv_message = os.urandom(12)
-        cipher_message = Cipher(algorithms.AES(shared_key), modes.GCM(iv_message), backend=default_backend())
-        encryptor_message = cipher_message.encryptor()
-        cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+        cipher_message, iv_message, encryptor_message = aes_gcm_encrypt(shared_key, to_be_encrypted)
 
         packet.encrypted_text = cipher_message
         packet.iv = iv_message
@@ -507,10 +469,7 @@ def handle_send_message(get_user):
 
     to_be_encrypted = binascii.hexlify(df_public_bytes).decode('ascii') + '|' + str(message_state[receiver]['timestamp'])
 
-    iv_to_be_sent = os.urandom(12)
-    cipher = Cipher(algorithms.AES(shared_secret), modes.GCM(iv_to_be_sent), backend=default_backend())
-    encryptor = cipher.encryptor()
-    cipher_text = encryptor.update(to_be_encrypted.encode()) + encryptor.finalize()
+    cipher_text, iv_to_be_sent, encryptor = aes_gcm_encrypt(shared_secret, to_be_encrypted)
 
     packet_to_be_sent.encrypted_text = cipher_text
     packet_to_be_sent.iv = iv_to_be_sent
@@ -565,10 +524,7 @@ def check_if_shared_key_exists(inp, username, packet):
             to_be_encrypted = username + '|' + message + '|' + str(message_id) + '|' + str(0) + '|' + str(1)
 
             # encrypt
-            iv_message = os.urandom(12)
-            cipher_message = Cipher(algorithms.AES(message_state[receiver]['shared-key']), modes.GCM(iv_message), backend=default_backend())
-            encryptor_message = cipher_message.encryptor()
-            cipher_message = encryptor_message.update(to_be_encrypted.encode()) + encryptor_message.finalize()
+            cipher_message, iv_message, encryptor_message = aes_gcm_encrypt(message_state[receiver]['shared-key'], to_be_encrypted)
 
             packet.encrypted_text = cipher_message
             packet.iv = iv_message
@@ -637,10 +593,8 @@ def check_challenge_validity(packet):
     iv = packet.iv
     tag = packet.tag
     encrypted_text = packet.encrypted_text
-    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(encrypted_text) + decryptor.finalize()
-    if state['c2'] != int(decrypted_text.decode()) - 10:
+    decrypted_text = aes_gcm_decrypt(state['key'], encrypted_text, iv, tag)
+    if state['c2'] != int(decrypted_text) - 10:
         sys.exit(0)
 
 
@@ -684,6 +638,7 @@ def build_logout_packet():
     packet.tag = encryptor.tag
     #packet.username = username
     return packet
+
 
 def main():
     # command line args - username, server ip, server port
