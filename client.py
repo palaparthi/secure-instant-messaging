@@ -116,7 +116,12 @@ def listen_for_response(me, password):
     while 1:
         response, address = s.recvfrom(1024)
         deser_resp.ParseFromString(response)
-        if deser_resp.packet_type == 'LIST-RESULT':
+        if deser_resp.packet_type == 'CLIENT-LOGOUT':
+            user_logging_out = reverse_lookup[address]
+            message_state.pop(user_logging_out)
+            forward_lookup.pop(user_logging_out)
+            reverse_lookup.pop(address)
+        elif deser_resp.packet_type == 'LIST-RESULT':
             # List of all signed in users
             check_validity_list_result(deser_resp)
         elif deser_resp.packet_type == 'USER-RESULT':
@@ -315,6 +320,10 @@ def handle_message_authentication_stage_1(received_packet, address):
     parts = decrypted_text.split('|')
     shared_secret = binascii.unhexlify(parts[0].encode('ascii'))
     sender = parts[1]
+    # check the freshness of ticket received
+    timestamp_from_server = datetime.datetime.strptime(parts[2], "%Y-%m-%d %H:%M:%S.%f")
+    if (datetime.datetime.now() - timestamp_from_server).total_seconds() > time_diff:
+        return
 
     encrypted_text = received_packet.encrypted_text
     iv = received_packet.iv
@@ -636,8 +645,18 @@ def build_logout_packet():
     packet.encrypted_text = encrypted_text
     packet.iv = iv
     packet.tag = encryptor.tag
-    #packet.username = username
     return packet
+
+
+def handle_logout():
+    for client in forward_lookup:
+        packet = finduser_pb2.FindUser()
+        packet.packet_type = 'CLIENT-LOGOUT'
+        encrypted_text, iv, encryptor = aes_gcm_encrypt(message_state[client]['shared-key'], "CLIENT-LOGOUT")
+        packet.encrypted_text = encrypted_text
+        packet.iv = iv
+        packet.tag = encryptor.tag
+        s.sendto(packet.SerializeToString(), forward_lookup[client])
 
 
 def main():
@@ -696,24 +715,28 @@ def main():
     t.start()
 
     packet = finduser_pb2.FindUser()
-    while 1:
-        inp = input("+>")
-        input_type = find_input_type(inp)
-        if input_type == 'list':
-            packet = build_list_packet(username)
-            # send list packet to server
-            s.sendto(packet.SerializeToString(), (server_ip, server_port))
-        elif input_type == 'send':
-            if not check_if_shared_key_exists(inp, username, packet):
-                find_user(inp, server_ip, server_port, username, packet)
-        elif input_type == 'logout':
-            packet = build_logout_packet()
-            s.sendto(packet.SerializeToString(), (server_ip, server_port))
-            sys.exit(0)
-        else:
-            print('Please enter the appropriate command, help: [list, send username message, logout]')
-        packet.Clear()
-        time.sleep(1)
+    try:
+        while 1:
+            inp = input("+>")
+            input_type = find_input_type(inp)
+            if input_type == 'list':
+                packet = build_list_packet(username)
+                # send list packet to server
+                s.sendto(packet.SerializeToString(), (server_ip, server_port))
+            elif input_type == 'send':
+                if not check_if_shared_key_exists(inp, username, packet):
+                    find_user(inp, server_ip, server_port, username, packet)
+            elif input_type == 'logout':
+                sys.exit(0)
+            else:
+                print('Please enter the appropriate command, help: [list, send username message, logout]')
+            packet.Clear()
+            time.sleep(1)
+    except:
+        packet = build_logout_packet()
+        s.sendto(packet.SerializeToString(), (server_ip, server_port))
+        handle_logout()
+        print('Exiting the application')
     s.close()
 
 

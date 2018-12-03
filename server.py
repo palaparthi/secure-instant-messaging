@@ -3,6 +3,7 @@
 # Client-Server packet types - SIGN-IN, LIST, FIND-USER
 # Server-Client packet types - LIST_RESULT, USER-RESULT, INVALIDATE-CLIENT
 import binascii
+import datetime
 import random
 
 import os
@@ -195,7 +196,7 @@ def find_user(data):
         shared_secret = Utils.diffie_hellman_key_exchange(dh_private_key, dh_public_key)
 
         # build ticket to receiver
-        ticket_to_be_encrypted = binascii.hexlify(shared_secret).decode('ascii') + '|' + username
+        ticket_to_be_encrypted = binascii.hexlify(shared_secret).decode('ascii') + '|' + username + '|' + str(datetime.datetime.now())
         ticket_to_receiver, iv_receiver, receiver_encryptor = aes_gcm_encrypt(receiver_key, ticket_to_be_encrypted)
 
         # concatenate nonce, receiver, shared-secret, ticket_to_receiver
