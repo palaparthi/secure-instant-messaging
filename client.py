@@ -125,12 +125,11 @@ def listen_for_response(me, password):
             # List of all signed in users
             check_validity_list_result(deser_resp)
         elif deser_resp.packet_type == 'USER-RESULT':
-            try:
-                # User configuration to whom we need to send message
-                user = deser_resp
-                handle_send_message(user, me)
-            except:
-                print('User does not exist')
+            # User configuration to whom we need to send message
+            user = deser_resp
+            handle_send_message(user)
+        elif deser_resp.packet_type == 'NO-USER-RESULT':
+            handle_no_user(deser_resp)
         elif deser_resp.packet_type == 'MESSAGE_1':
             handle_message_authentication_stage_1(deser_resp, address)
         elif deser_resp.packet_type == 'MESSAGE_2':
@@ -452,8 +451,22 @@ def fragment_message(message, me, msg_id, shared_key):
     return fragment_list
 
 
+def handle_no_user(packet):
+    received_packet = packet
+    iv = received_packet.iv
+    tag = received_packet.tag
+    decrypted_text = aes_gcm_decrypt(state['key'], received_packet.encrypted_text, iv, tag)
+    parts = decrypted_text.split('|')
+    nonce = int(parts[0])
+    receiver = parts[1]
+    if nonce != message_state[receiver]['server-nonce'] + 1:
+        return
+    else:
+        print(receiver, 'does not exist')
+
+
 # Send message client to client
-def handle_send_message(get_user, me):
+def handle_send_message(get_user):
     global message_id
 
     received_packet = get_user
@@ -463,10 +476,8 @@ def handle_send_message(get_user, me):
     tag_for_receiver = received_packet.receiver_tag
 
     # decrypt received packet
-    cipher = Cipher(algorithms.AES(state['key']), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-    decrypted_text = decryptor.update(received_packet.encrypted_text) + decryptor.finalize()
-    parts = decrypted_text.decode().split('|')
+    decrypted_text = aes_gcm_decrypt(state['key'], received_packet.encrypted_text, iv, tag)
+    parts = decrypted_text.split('|')
 
     nonce = int(parts[0])
     receiver = parts[1]
@@ -530,6 +541,8 @@ def find_input_type(inp):
         return "list"
     elif command[0] == "send":
         return "send"
+    elif command[0] == "logout":
+        return "logout"
     else:
         return 'noop'
 
@@ -631,14 +644,26 @@ def check_challenge_validity(packet):
         sys.exit(0)
 
 
+def aes_gcm_encrypt(key, message_to_encrypt):
+    iv = os.urandom(12)
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    encrypted_text = encryptor.update(message_to_encrypt.encode()) + encryptor.finalize()
+    return encrypted_text, iv, encryptor
+
+
+def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted_text = decryptor.update(message_to_decrypt) + decryptor.finalize()
+    return decrypted_text.decode()
+
+
 def build_list_packet(username):
     key = state['key']
     list_state['nonce'] = random.randint(10000, 10000000)
     to_be_sent = str(list_state['nonce'])
-    iv = os.urandom(12)
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    encrypted_text = encryptor.update(to_be_sent.encode()) + encryptor.finalize()
+    encrypted_text, iv, encryptor = aes_gcm_encrypt(key, to_be_sent)
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'LIST'
     packet.encrypted_text = encrypted_text
@@ -647,6 +672,18 @@ def build_list_packet(username):
     packet.username = username
     return packet
 
+
+def build_logout_packet():
+    key = state['key']
+    to_be_sent = "LOGOUT"
+    encrypted_text, iv, encryptor = aes_gcm_encrypt(key, to_be_sent)
+    packet = finduser_pb2.FindUser()
+    packet.packet_type = 'LOGOUT'
+    packet.encrypted_text = encrypted_text
+    packet.iv = iv
+    packet.tag = encryptor.tag
+    #packet.username = username
+    return packet
 
 def main():
     # command line args - username, server ip, server port
@@ -714,8 +751,12 @@ def main():
         elif input_type == 'send':
             if not check_if_shared_key_exists(inp, username, packet):
                 find_user(inp, server_ip, server_port, username, packet)
+        elif input_type == 'logout':
+            packet = build_logout_packet()
+            s.sendto(packet.SerializeToString(), (server_ip, server_port))
+            sys.exit(0)
         else:
-            print('Please enter the appropriate command, help: [list, send username message]')
+            print('Please enter the appropriate command, help: [list, send username message, logout]')
         packet.Clear()
         time.sleep(1)
     s.close()
