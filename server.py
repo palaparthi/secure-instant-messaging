@@ -53,7 +53,7 @@ def invalidate_client(username):
 
 
 def read_password_hash(username):
-    f = open('server.conf', 'r')
+    f = open('passwords.txt', 'r')
     hashes = f.readlines()
     for hash in hashes:
         parts = hash.split(':')

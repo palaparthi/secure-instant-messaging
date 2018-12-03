@@ -18,6 +18,8 @@ import threading
 import time
 import signal
 import collections
+import json
+import getpass
 
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
 
@@ -718,18 +720,16 @@ def handle_logout():
         print('Error')
 
 
+def read_server_configuration():
+    with open('client.json') as configuration_json:
+        server_configuration = json.load(configuration_json)
+    return server_configuration['ip'], server_configuration['port']
+
+
 def main():
-    # command line args - username, server ip, server port
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-u', '--username',required=True, help='username')
-    parser.add_argument('-p', '--password',required=True, help='password')
-    parser.add_argument('-sip', '--server_ip',required=True, help='server ip address')
-    parser.add_argument('-sp', '--server_port', required=True, type=int, help='server port')
-    args = parser.parse_args()
-    username = args.username
-    password = args.password
-    server_ip = args.server_ip
-    server_port = int(args.server_port)
+    server_ip, server_port = read_server_configuration()
+    username = input('Enter username\n')
+    password = getpass.getpass('Enter password\n')
 
     # check if username and password are not empty
     if username == '' or password == '' or username is None or password is None:
@@ -794,10 +794,14 @@ def main():
             packet.Clear()
             time.sleep(1)
     except:
-        packet = build_logout_packet()
-        s.sendto(packet.SerializeToString(), (server_ip, server_port))
-        handle_logout()
-        print('Exiting the application')
+        try:
+            packet = build_logout_packet()
+            s.sendto(packet.SerializeToString(), (server_ip, server_port))
+            handle_logout()
+            print('Exiting the application')
+        except:
+            print('Error when logging out. Exiting..')
+            sys.exit(1)
     s.close()
 
 
