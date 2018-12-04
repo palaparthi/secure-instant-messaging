@@ -562,12 +562,18 @@ def find_input_type(inp):
         return 'noop'
 
 
+def sanitize_input(input):
+    message = input.replace('|', ' ')
+    return message
+
+
 def check_if_shared_key_exists(inp, username, packet):
     global message_id
     # check if shared key exists
     splits = inp.split(' ')
     receiver = splits[1]
     message = ' '.join(splits[2:])
+    message = sanitize_input(message)
     if receiver in message_state and message_state[receiver]['shared-key'] is not None:
         address = forward_lookup[receiver]
         if message_id > 100000:
@@ -599,10 +605,11 @@ def check_if_shared_key_exists(inp, username, packet):
 
 
 # find user configuration from server to whom we need to send message
-def find_user(inp, server_ip, server_port, username, packet):
+def find_user(inp, server_ip, server_port, packet):
     splits = inp.split(' ')
     receiver = splits[1]
     message = ' '.join(splits[2:])
+    message = sanitize_input(message)
     packet.packet_type = 'FIND-USER'
     nonce = int(uuid.uuid4().hex, 16)
 
@@ -784,7 +791,7 @@ def listen_to_user_input(username, server_ip, server_port):
                 s.sendto(packet.SerializeToString(), (server_ip, server_port))
             elif input_type == 'send':
                 if not check_if_shared_key_exists(inp, username, packet):
-                    find_user(inp, server_ip, server_port, username, packet)
+                    find_user(inp, server_ip, server_port, packet)
             elif input_type == 'logout':
                 sys.exit(0)
             else:
