@@ -49,9 +49,15 @@ def invalidate_client(username):
     packet.iv = iv
     packet.tag = encryptor.tag
     s.sendto(packet.SerializeToString(), address)
+    print(dict_users)
+    print(reverse_lookup)
+    print(users_state)
     dict_users.pop(username, None)
     reverse_lookup.pop(address, None)
     users_state.pop(address, None)
+    print(dict_users)
+    print(reverse_lookup)
+    print(users_state)
 
 
 def read_password_hash(username):
@@ -96,9 +102,6 @@ def rsa_decrypt(private_key, cipher_text):
 # Handle user signin
 def handle_signin(private_key, data, address):
     try:
-        # verify username before decrypting
-
-
         username = rsa_decrypt(private_key, data.encrypted_username).decode()
         client_df_contribution = data.encrypted_text
         client_iv = data.iv
@@ -137,7 +140,6 @@ def check_challenge_validity_and_send_response(packet, address):
         client_tag = packet.tag
         encrypted_text = packet.encrypted_text
         username = users_state[address]['username']
-        # username = reverse_lookup[address]
         decrypted_text = aes_gcm_decrypt(users_state[address]['key'], encrypted_text, client_iv, client_tag)
         parts = decrypted_text.split('|')
         c1_response = int(parts[0])
@@ -211,10 +213,16 @@ def handle_logout(packet, address):
     username = reverse_lookup[address]
     key = users_state[address]['key']
     decrypted_text = aes_gcm_decrypt(key, packet.encrypted_text, packet.iv, packet.tag)
+    print(dict_users)
+    print(reverse_lookup)
+    print(users_state)
     if decrypted_text == 'LOGOUT':
         dict_users.pop(username, None)
         reverse_lookup.pop(address, None)
         users_state.pop(address, None)
+    print(dict_users)
+    print(reverse_lookup)
+    print(users_state)
 
 
 def create_no_user_packet(nonce, key, receiver):

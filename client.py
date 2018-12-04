@@ -57,7 +57,6 @@ def flush():
 
 
 def update_state(a, stage):
-    # state['state'] = stage
     state['a'] = a
 
 
@@ -93,10 +92,9 @@ def establish_key(packet, username, password):
         print("Error: Could not signin")
 
 
-def send_packet(username):
+def send_packet():
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'SIGN-IN_3'
-    # packet.username = username
     to_be_sent = str(state['c1'] + 10) + '|' + str(state['c2'])
     encrypted_text_to_be_sent, iv, encryptor = aes_gcm_encrypt(state['key'], to_be_sent)
     packet.encrypted_text = encrypted_text_to_be_sent
@@ -127,6 +125,9 @@ def listen_for_response(me):
         deser_resp.ParseFromString(response)
         if deser_resp.packet_type == 'CLIENT-LOGOUT':
             try:
+                print(message_state)
+                print(forward_lookup)
+                print(reverse_lookup)
                 user_logging_out = reverse_lookup[address]
                 decrypted_text = aes_gcm_decrypt(message_state[user_logging_out]['shared-key'], deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
             except:
@@ -135,6 +136,9 @@ def listen_for_response(me):
                 message_state.pop(user_logging_out)
                 forward_lookup.pop(user_logging_out)
                 reverse_lookup.pop(address)
+                print(message_state)
+                print(forward_lookup)
+                print(reverse_lookup)
         elif deser_resp.packet_type == 'LIST-RESULT':
             # List of all signed in users
             check_validity_list_result(deser_resp)
@@ -177,18 +181,22 @@ def listen_for_response(me):
             except:
                 print('Error while reading message')
         elif deser_resp.packet_type == 'INVALIDATE-CLIENT':
-            try:
-                sys.stdout.write('\n')
-                flush()
-                print('You have signed in from another window, exiting')
-                decrypted_text = aes_gcm_decrypt(state['key'], deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
-                if decrypted_text == 'INVALIDATE-CLIENT':
-                    handle_logout()
-                    os._exit(1)
-            except:
-                print('Error while logging out')
+            handle_invalidate_client(deser_resp)
         deser_resp.Clear()
     s.close()
+
+
+def handle_invalidate_client(deser_resp):
+    try:
+        sys.stdout.write('\n')
+        flush()
+        print('You have signed in from another window, exiting')
+        decrypted_text = aes_gcm_decrypt(state['key'], deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
+        if decrypted_text == 'INVALIDATE-CLIENT':
+            handle_logout()
+            sys.exit(0)
+    except:
+        sys.exit(0)
 
 
 def handle_message_authentication_stage_5(received_packet, address):
@@ -687,7 +695,7 @@ def signin(username, password):
         return signin_packet, dh_private
     except Exception:
         print('Error when signing in')
-        os._exit(1)
+        sys.exit(0)
 
 
 def check_challenge_validity(packet):
@@ -698,10 +706,10 @@ def check_challenge_validity(packet):
         decrypted_text = aes_gcm_decrypt(state['key'], encrypted_text, iv, tag)
         if state['c2'] != int(decrypted_text) - 10:
             print('Error: Could not signin')
-            os._exit(1)
+            sys.exit(0)
     except:
         print('Error: Could not signin')
-        os._exit(1)
+        sys.exit(0)
 
 
 def aes_gcm_encrypt(key, message_to_encrypt):
@@ -768,58 +776,7 @@ def read_server_configuration():
     return server_configuration['ip'], server_configuration['port']
 
 
-def main():
-    server_ip, server_port = read_server_configuration()
-    # username = input('Enter username\n')
-    # password = getpass.getpass('Enter password\n')
-
-    username = sys.argv[1]
-    password = sys.argv[2]
-
-    # check if username and password are not empty
-    if username == '' or password == '' or username is None or password is None:
-        print('Username or password cannot be empty')
-        return
-
-    signin_packet, a = signin(username, password)
-    update_state(a, 1)
-
-    # send sign-in packet to server
-    s.sendto(signin_packet.SerializeToString(), (server_ip, server_port))
-    signal.signal(signal.SIGALRM, timeout_signal)
-    signal.alarm(7)
-    signin_packet.Clear()
-    signin_response, address = s.recvfrom(1024)
-    signin_packet.ParseFromString(signin_response)
-    signal.alarm(0)
-    if signin_packet.packet_type == 'SIGN-IN_2':
-        establish_key(signin_packet, username, password)
-        s.sendto(send_packet(username).SerializeToString(), (server_ip, server_port))
-    elif signin_packet.packet_type == "FAILURE":
-        print("Error: Could not signin")
-        return
-    elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
-        sys.stdout.write('\n')
-        flush()
-        print('You have signed in from another window, exiting')
-        handle_logout()
-        print('Exiting the application')
-        sys.exit(0)
-
-    signin_response, address = s.recvfrom(1024)
-    signin_packet.ParseFromString(signin_response)
-    signal.alarm(0)
-    if signin_packet.packet_type == 'SIGN-IN_4':
-        check_challenge_validity(signin_packet)
-    if signin_packet.packet_type == "FAILURE":
-        print("Error: Could not signin")
-        return
-
-    # Start a thread to listen for responses
-    t = threading.Thread(target=listen_for_response, args=(username,))
-    t.daemon = True
-    t.start()
-
+def listen_to_user_input(username, server_ip, server_port):
     packet = finduser_pb2.FindUser()
     try:
         while 1:
@@ -846,8 +803,82 @@ def main():
             print('Exiting the application')
         except:
             print('Error when logging out. Exiting..')
-            sys.exit(1)
-    s.close()
+            sys.exit(0)
+
+
+def main():
+    server_ip, server_port = read_server_configuration()
+    # username = input('Enter username\n')
+    # password = getpass.getpass('Enter password\n')
+
+    username = sys.argv[1]
+    password = sys.argv[2]
+
+    # check if username and password are not empty
+    if username == '' or password == '' or username is None or password is None:
+        print('Username or password cannot be empty')
+        return
+
+    signin_packet, a = signin(username, password)
+    update_state(a, 1)
+
+    # send sign-in packet to server
+    s.sendto(signin_packet.SerializeToString(), (server_ip, server_port))
+    signal.signal(signal.SIGALRM, timeout_signal)
+    signal.alarm(7)
+    signin_packet.Clear()
+    signin_response, address = s.recvfrom(1024)
+    signin_packet.ParseFromString(signin_response)
+    signal.alarm(0)
+    if signin_packet.packet_type == 'SIGN-IN_2':
+        establish_key(signin_packet, username, password)
+        s.sendto(send_packet().SerializeToString(), (server_ip, server_port))
+    elif signin_packet.packet_type == "FAILURE":
+        print("Error: Could not signin")
+        return
+    elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
+        sys.stdout.write('\n')
+        flush()
+        print('You have signed in from another window, exiting')
+        handle_logout()
+        print('Exiting the application')
+        sys.exit(0)
+
+    signin_response, address = s.recvfrom(1024)
+    signin_packet.ParseFromString(signin_response)
+    signal.alarm(0)
+    if signin_packet.packet_type == 'SIGN-IN_4':
+        check_challenge_validity(signin_packet)
+    if signin_packet.packet_type == "FAILURE":
+        print("Error: Could not signin")
+        return
+
+    # Start a thread to listen for responses
+    t = threading.Thread(target=listen_for_response, args=(username,))
+    t.daemon = True
+    t.start()
+
+    # Start a thread to listen for user input
+    t_user = threading.Thread(target=listen_to_user_input, args=(username, server_ip, server_port,))
+    t_user.daemon = True
+    t_user.start()
+    try:
+        while 1:
+            if not t.isAlive() or not t_user.isAlive():
+                sys.exit(0)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print('main thread')
+        try:
+            packet = build_logout_packet()
+            s.sendto(packet.SerializeToString(), (server_ip, server_port))
+            handle_logout()
+            print('Exiting the application')
+        except:
+            print('Error when logging out. Exiting..')
+            sys.exit(0)
+    except Exception:
+        print('plain')
 
 
 if __name__ == "__main__":
