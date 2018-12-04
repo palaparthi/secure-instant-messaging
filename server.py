@@ -114,6 +114,7 @@ def handle_signin(private_key, data, address):
         dh_public, dh_private = Utils.diffie_hellman_key_generation()
     except:
         print('Error logging in the client')
+        return None
 
     shared_key = Utils.diffie_hellman_key_exchange(dh_private, load_dh_public_key(client_df))
 
@@ -168,6 +169,7 @@ def check_challenge_validity_and_send_response(packet, address):
         return data_to_send
     except:
         print('Error while verifying challenge')
+        return None
 
 
 # symmetric decryption using AES-GCM
@@ -209,17 +211,21 @@ def handle_list(packet, address):
         return packet_to_be_sent
     except:
         print('Error while creating list')
+        return None
 
 
 # remove state of the user logged out
 def handle_logout(packet, address):
-    username = reverse_lookup[address]
-    key = users_state[address]['key']
-    decrypted_text = aes_gcm_decrypt(key, packet.encrypted_text, packet.iv, packet.tag)
-    if decrypted_text == 'LOGOUT':
-        dict_users.pop(username, None)
-        reverse_lookup.pop(address, None)
-        users_state.pop(address, None)
+    try:
+        username = reverse_lookup[address]
+        key = users_state[address]['key']
+        decrypted_text = aes_gcm_decrypt(key, packet.encrypted_text, packet.iv, packet.tag)
+        if decrypted_text == 'LOGOUT':
+            dict_users.pop(username, None)
+            reverse_lookup.pop(address, None)
+            users_state.pop(address, None)
+    except:
+        print('Error loggin out client')
 
 
 # build packet to be sent to the client when the user asked for is not found
@@ -246,6 +252,7 @@ def find_user(data, address):
         nonce += 1
     except:
         print('Error while decrypting find-user packet')
+        return None
     if receiver in dict_users:
         address_of_receiver = (dict_users[receiver]['ip_address'], dict_users[receiver]['port'])
         if users_state[address_of_receiver]:
@@ -281,6 +288,7 @@ def find_user(data, address):
                 return packet
             except:
                 print('Error while encrypting')
+                return None
         else:
             return create_no_user_packet(nonce, key, receiver)
     else:
@@ -334,20 +342,25 @@ def main():
         if packet_type == 'SIGN-IN_1':
             # Client initial signin handle
             sign_in_packet = handle_signin(private_key, data_decode, address)
-            s.sendto(sign_in_packet.SerializeToString(), (address[0], address[1]))
+            if sign_in_packet:
+                s.sendto(sign_in_packet.SerializeToString(), (address[0], address[1]))
         elif packet_type == 'SIGN-IN_3':
             data_to_send = check_challenge_validity_and_send_response(data_decode, address)
-            s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
+            if data_to_send:
+                s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
         elif packet_type == 'LIST':
             data_to_send = handle_list(data_decode, address)
-            s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
+            if data_to_send:
+                s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
         elif packet_type == 'FIND-USER':
             # find configurations of an user
             data_to_send = find_user(data_decode, address)
-            s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
+            if data_to_send:
+                s.sendto(data_to_send.SerializeToString(), (address[0], address[1]))
         elif packet_type == 'LOGOUT':
             handle_logout(data_decode, address)
-        data_to_send.Clear()
+        if data_to_send:
+            data_to_send.Clear()
     s.close()
 
 

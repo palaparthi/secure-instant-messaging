@@ -719,7 +719,6 @@ def check_challenge_validity(packet):
         encrypted_text = packet.encrypted_text
         decrypted_text = aes_gcm_decrypt(state['key'], encrypted_text, iv, tag)
         if state['c2'] != int(decrypted_text) - 10:
-            print('Error: Could not signin')
             sys.exit(0)
     except:
         print('Error: Could not signin')
@@ -744,7 +743,7 @@ def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
 
 
 # build packet for list command
-def build_list_packet(username):
+def build_list_packet():
     key = state['key']
     list_state['nonce'] = int(uuid.uuid4().hex, 16)
     to_be_sent = str(list_state['nonce'])
@@ -754,7 +753,6 @@ def build_list_packet(username):
     packet.encrypted_text = encrypted_text
     packet.iv = iv
     packet.tag = encryptor.tag
-    packet.username = username
     return packet
 
 
@@ -804,7 +802,7 @@ def listen_to_user_input(username, server_ip, server_port):
             inp = input("+>")
             input_type = find_input_type(inp)
             if input_type == 'list':
-                packet = build_list_packet(username)
+                packet = build_list_packet()
                 # send list packet to server
                 s.sendto(packet.SerializeToString(), (server_ip, server_port))
             elif input_type == 'send':
@@ -829,50 +827,51 @@ def listen_to_user_input(username, server_ip, server_port):
 
 def main():
     server_ip, server_port = read_server_configuration()
-    # username = input('Enter username\n')
-    # password = getpass.getpass('Enter password\n')
-
-    username = sys.argv[1]
-    password = sys.argv[2]
+    username = input('Enter username\n')
+    password = getpass.getpass('Enter password\n')
 
     # check if username and password are not empty
     if username == '' or password == '' or username is None or password is None:
         print('Username or password cannot be empty')
         return
 
-    signin_packet, a = signin(username, password)
-    update_state(a, 1)
+    try:
+        signin_packet, a = signin(username, password)
+        update_state(a, 1)
 
-    # send sign-in packet to server
-    s.sendto(signin_packet.SerializeToString(), (server_ip, server_port))
-    signal.signal(signal.SIGALRM, timeout_signal)
-    signal.alarm(7)
-    signin_packet.Clear()
-    signin_response, address = s.recvfrom(1024)
-    signin_packet.ParseFromString(signin_response)
-    signal.alarm(0)
-    if signin_packet.packet_type == 'SIGN-IN_2':
-        establish_key(signin_packet, username, password)
-        s.sendto(send_packet().SerializeToString(), (server_ip, server_port))
-    elif signin_packet.packet_type == "FAILURE":
-        print("Error: Could not signin")
-        return
-    elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
-        sys.stdout.write('\n')
-        flush()
-        print('You have signed in from another window, exiting')
-        handle_logout()
-        print('Exiting the application')
+        # send sign-in packet to server
+        s.sendto(signin_packet.SerializeToString(), (server_ip, server_port))
+        signal.signal(signal.SIGALRM, timeout_signal)
+        signal.alarm(10)
+        signin_packet.Clear()
+        signin_response, address = s.recvfrom(1024)
+        signin_packet.ParseFromString(signin_response)
+        if signin_packet.packet_type == 'SIGN-IN_2':
+            establish_key(signin_packet, username, password)
+            s.sendto(send_packet().SerializeToString(), (server_ip, server_port))
+        elif signin_packet.packet_type == "FAILURE":
+            print("Error: Could not signin")
+            return
+        elif signin_packet.packet_type == 'INVALIDATE-CLIENT':
+            sys.stdout.write('\n')
+            flush()
+            print('You have signed in from another window, exiting')
+            handle_logout()
+            print('Exiting the application')
+            sys.exit(0)
+
+        signin_response, address = s.recvfrom(1024)
+        signin_packet.ParseFromString(signin_response)
+        signal.alarm(0)
+        if signin_packet.packet_type == 'SIGN-IN_4':
+            check_challenge_validity(signin_packet)
+        if signin_packet.packet_type == "FAILURE":
+            print("Error: Could not signin")
+            return
+        signal.alarm(0)
+    except:
+        print('Error logging in')
         sys.exit(0)
-
-    signin_response, address = s.recvfrom(1024)
-    signin_packet.ParseFromString(signin_response)
-    signal.alarm(0)
-    if signin_packet.packet_type == 'SIGN-IN_4':
-        check_challenge_validity(signin_packet)
-    if signin_packet.packet_type == "FAILURE":
-        print("Error: Could not signin")
-        return
 
     # Start a thread to listen for responses
     t = threading.Thread(target=listen_for_response, args=(username,))
