@@ -4,9 +4,6 @@ from cryptography.hazmat.primitives.asymmetric import dh, ec
 from cryptography.hazmat.backends import default_backend
 
 
-# parameters = dh.generate_parameters(generator=2, key_size=2048,backend=default_backend())
-
-
 def diffie_hellman_key_generation():
     dh_private = ec.generate_private_key(ec.SECP384R1(), default_backend())
     dh_public = dh_private.public_key()

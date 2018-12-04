@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-# Client-Server packet types - SIGN-IN, LIST, FIND-USER
-# Server-Client packet types - LIST_RESULT, USER-RESULT, INVALIDATE-CLIENT
 import binascii
 import datetime
 import random
@@ -35,6 +33,7 @@ except socket.error:
     print("ERROR: Failed to create socket")
 
 
+# find the type of packet
 def find_packet_type(data):
     return data.packet_type
 
@@ -55,6 +54,7 @@ def invalidate_client(username):
     users_state.pop(address, None)
 
 
+# read password hashes stored
 def read_password_hash(username):
     f = open('passwords.txt', 'r')
     hashes = f.readlines()
@@ -66,6 +66,7 @@ def read_password_hash(username):
     f.close()
 
 
+# update user's state on server
 def update_state(username, key, state, c1, address):
     if state == 2:
         users_state[address] = {}
@@ -75,12 +76,13 @@ def update_state(username, key, state, c1, address):
     users_state[address]['username'] = username
 
 
+# load DH public key
 def load_dh_public_key(pem):
     key = load_pem_public_key(pem, backend=default_backend())
     return key
 
 
-# decrypt the cipher text with destination private key and return the text
+# decrypt the cipher text with server's private key
 def rsa_decrypt(private_key, cipher_text):
     try:
         plain_text = private_key.decrypt(
@@ -121,6 +123,7 @@ def handle_signin(private_key, data, address):
     text_to_be_sent = username + '|' + dh_public.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode() + '|' + str(c1)
     encrypted_text_to_be_sent, iv, encryptor = aes_gcm_encrypt(pwd_hash, text_to_be_sent)
 
+    # build packet to be sent
     sign_in_packet = finduser_pb2.FindUser()
     sign_in_packet.packet_type = 'SIGN-IN_2'
     sign_in_packet.encrypted_text = encrypted_text_to_be_sent
@@ -129,6 +132,7 @@ def handle_signin(private_key, data, address):
     return sign_in_packet
 
 
+# validate the client's challenge with the established DH key and respond to client's challenge
 def check_challenge_validity_and_send_response(packet, address):
     try:
         client_iv = packet.iv
@@ -144,6 +148,7 @@ def check_challenge_validity_and_send_response(packet, address):
             data_to_send.packet_type = 'FAILURE'
             return data_to_send
 
+        # build packet to be sent
         encrypted_text, iv, encryptor = aes_gcm_encrypt(users_state[address]['key'], str(c2 + 10))
         data_to_send.packet_type = 'SIGN-IN_4'
         data_to_send.encrypted_text = encrypted_text
@@ -165,6 +170,7 @@ def check_challenge_validity_and_send_response(packet, address):
         print('Error while verifying challenge')
 
 
+# symmetric decryption using AES-GCM
 def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
     decryptor = cipher.decryptor()
@@ -172,6 +178,7 @@ def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
     return decrypted_text.decode()
 
 
+# symmetric encryption using AES-GCM of the provided message with the provided key
 def aes_gcm_encrypt(key, message_to_encrypt):
     iv = os.urandom(12)
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
@@ -204,6 +211,7 @@ def handle_list(packet, address):
         print('Error while creating list')
 
 
+# remove state of the user logged out
 def handle_logout(packet, address):
     username = reverse_lookup[address]
     key = users_state[address]['key']
@@ -214,6 +222,7 @@ def handle_logout(packet, address):
         users_state.pop(address, None)
 
 
+# build packet to be sent to the client when the user asked for is not found
 def create_no_user_packet(nonce, key, receiver):
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'NO-USER-RESULT'
@@ -225,12 +234,10 @@ def create_no_user_packet(nonce, key, receiver):
     return packet
 
 
-# Find the user in the dictionary, if not available the user field in the packet contains None
+# send the encrypted DH contribution to client
 def find_user(data, address):
     try:
         username = reverse_lookup[address]
-        # nonce = int(data.nonce)
-        # nonce += 1
         key = users_state[address]['key']
         receiver_and_nonce = aes_gcm_decrypt(key, data.encrypted_text, data.iv, data.tag)
         parts = receiver_and_nonce.split("|")
@@ -263,6 +270,7 @@ def find_user(data, address):
 
                 encrypted_text, iv, encryptor = aes_gcm_encrypt(key, to_be_sent)
 
+                # build packet to be sent
                 packet = finduser_pb2.FindUser()
                 packet.packet_type = 'USER-RESULT'
                 packet.encrypted_text = encrypted_text
@@ -279,7 +287,7 @@ def find_user(data, address):
         return create_no_user_packet(nonce, key, receiver)
 
 
-# load private key from path, if invalid file exit
+# load private key from path
 def load_rsa_private_key(path):
     try:
         with open(path, "rb") as key_file:
@@ -300,11 +308,13 @@ def load_rsa_private_key(path):
 
 
 def main():
+    # parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('-sp', '--port', type=int, help='port to bind server', required=True)
     args = parser.parse_args()
     port = int(args.port)
 
+    # load private key
     private_key = load_rsa_private_key('private_key.der')
 
     try:

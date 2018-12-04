@@ -3,9 +3,7 @@
 # Client program for CS6700 project
 # Author: Sree Siva Sandeep Palaparthi, Nimisha Peddakam
 import hashlib
-import random
 import socket
-import argparse
 import os
 import datetime
 
@@ -39,12 +37,6 @@ time_diff = 120
 reverse_lookup = collections.defaultdict(lambda: None)
 forward_lookup = collections.defaultdict(lambda: None)
 
-# username should not be more than 20 characters
-
-# Client-Server packet types - SIGN-IN, LIST, FIND-USER
-# Server-Client packet types - LIST_RESULT, USER-RESULT, INVALIDATE-CLIENT
-# Client-Client packets - MESSAGE
-
 # create socket
 try:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -52,20 +44,24 @@ except socket.error:
     print("ERROR: Failed to create socket")
 
 
+# flush output stream
 def flush():
     sys.stdout.write('<- ')
     sys.stdout.flush()
 
 
+# update client's state
 def update_state(a, stage):
     state['a'] = a
 
 
+# load DH public key
 def load_dh_public_key(pem):
     key = load_pem_public_key(pem, backend=default_backend())
     return key
 
 
+# establish DH key
 def establish_key(packet, username, password):
     try:
         # calculate shared key
@@ -93,6 +89,7 @@ def establish_key(packet, username, password):
         print("Error: Could not signin")
 
 
+# build packet to be sent responding to challenge
 def send_packet():
     packet = finduser_pb2.FindUser()
     packet.packet_type = 'SIGN-IN_3'
@@ -104,6 +101,7 @@ def send_packet():
     return packet
 
 
+# validate list response
 def check_validity_list_result(packet):
     try:
         key = state['key']
@@ -119,6 +117,7 @@ def check_validity_list_result(packet):
         print('Error while sending message')
 
 
+# listen to requests on socket
 def listen_for_response(me):
     deser_resp = finduser_pb2.FindUser()
     while 1:
@@ -130,6 +129,7 @@ def listen_for_response(me):
                 decrypted_text = aes_gcm_decrypt(message_state[user_logging_out]['shared-key'], deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
             except:
                 print('Error Logging out')
+            # update client's state
             if decrypted_text == 'CLIENT-LOGOUT':
                 message_state.pop(user_logging_out)
                 forward_lookup.pop(user_logging_out)
@@ -181,6 +181,7 @@ def listen_for_response(me):
     s.close()
 
 
+# invalidate client's session
 def handle_invalidate_client(deser_resp):
     try:
         sys.stdout.write('\n')
@@ -194,6 +195,7 @@ def handle_invalidate_client(deser_resp):
         sys.exit(0)
 
 
+# handling fifth message of the messaging protocol
 def handle_message_authentication_stage_5(received_packet, address):
     try:
         encrypted_text = received_packet.encrypted_text
@@ -210,6 +212,7 @@ def handle_message_authentication_stage_5(received_packet, address):
         print('Error while sending message')
 
 
+# handling fourth message of the messaging protocol
 def handle_message_authentication_stage_4(received_packet, me, address):
     try:
         global message_id
@@ -219,7 +222,6 @@ def handle_message_authentication_stage_4(received_packet, me, address):
 
         # decrypt
         decrypted_text = aes_gcm_decrypt(shared_key, encrypted_text, received_packet.iv, received_packet.tag)
-
         parts = decrypted_text.split('|')
 
         # check if the nonce is valid
@@ -236,12 +238,12 @@ def handle_message_authentication_stage_4(received_packet, me, address):
         to_be_sent = str(received_nonce)
         cipher_text, iv, encryptor = aes_gcm_encrypt(shared_key, to_be_sent)
 
+        # build packet to be sent
         packet.encrypted_text = cipher_text
         packet.iv = iv
         packet.tag = encryptor.tag
 
         s.sendto(packet.SerializeToString(), address)
-
         time.sleep(1)
 
         message = message_buffer[sender].popleft()
@@ -258,6 +260,7 @@ def handle_message_authentication_stage_4(received_packet, me, address):
             # encrypt
             cipher_message, iv_message, encryptor_message = aes_gcm_encrypt(shared_key, to_be_encrypted)
 
+            # build message to be sent
             packet.encrypted_text = cipher_message
             packet.iv = iv_message
             packet.tag = encryptor_message.tag
@@ -273,6 +276,7 @@ def handle_message_authentication_stage_4(received_packet, me, address):
         print('Error while sending message')
 
 
+# handling third message of the messaging protocol
 def handle_message_authentication_stage_3(received_packet, address):
     try:
         encrypted_text = received_packet.encrypted_text
@@ -294,6 +298,7 @@ def handle_message_authentication_stage_3(received_packet, address):
         to_be_sent = str(received_nonce) + '|' + str(nonce)
         cipher_text, iv, encryptor = aes_gcm_encrypt(shared_key, to_be_sent)
 
+        # build packet to be sent
         packet.encrypted_text = cipher_text
         packet.iv = iv
         packet.tag = encryptor.tag
@@ -303,6 +308,7 @@ def handle_message_authentication_stage_3(received_packet, address):
         print('Error while sending message')
 
 
+# handling second message of the message protocol
 def handle_message_authentication_stage_2(received_packet, address):
     try:
         encrypted_text = received_packet.encrypted_text
@@ -347,6 +353,7 @@ def handle_message_authentication_stage_2(received_packet, address):
         print('Error while sending message')
 
 
+# handling first message of the messaging protocol
 def handle_message_authentication_stage_1(received_packet, address):
     try:
         ticket = received_packet.ticket_receiver
@@ -463,6 +470,7 @@ def fragment_message(message, me, msg_id, shared_key):
     return fragment_list
 
 
+# handle no user found on server
 def handle_no_user(packet):
     try:
         received_packet = packet
@@ -525,6 +533,7 @@ def handle_send_message(get_user):
 
         cipher_text, iv_to_be_sent, encryptor = aes_gcm_encrypt(shared_secret, to_be_encrypted)
 
+        # build packet to be sent
         packet_to_be_sent.encrypted_text = cipher_text
         packet_to_be_sent.iv = iv_to_be_sent
         packet_to_be_sent.tag = encryptor.tag
@@ -562,11 +571,13 @@ def find_input_type(inp):
         return 'noop'
 
 
+# sanitizing the input
 def sanitize_input(input):
     message = input.replace('|', ' ')
     return message
 
 
+# check for key establishment
 def check_if_shared_key_exists(inp, username, packet):
     global message_id
     # check if shared key exists
@@ -591,7 +602,6 @@ def check_if_shared_key_exists(inp, username, packet):
             packet.encrypted_text = cipher_message
             packet.iv = iv_message
             packet.tag = encryptor_message.tag
-
 
             s.sendto(packet.SerializeToString(), address)
         else:
@@ -638,7 +648,7 @@ def timeout_signal(signal_number, frame):
     sys.exit(0)
 
 
-# load public key from path, if invalid file exit
+# load public key from path
 def load_rsa_public_key(path):
     try:
         with open(path, "rb") as key_file:
@@ -657,7 +667,7 @@ def load_rsa_public_key(path):
     return dest_pub_key
 
 
-# encrypt the message with destination public key and return the cipher
+# encrypt the message with server's public key
 def rsa_encrypt(dest_pub_key, message):
     try:
         cipher_text = dest_pub_key.encrypt(
@@ -666,12 +676,12 @@ def rsa_encrypt(dest_pub_key, message):
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None))
-    except Exception as e:
-        print('Error logging in', e)
+    except:
         sys.exit(0)
     return cipher_text
 
 
+# initiate sigin in attempt
 def signin(username, password):
     try:
         dh_public, dh_private = Utils.diffie_hellman_key_generation()
@@ -701,6 +711,7 @@ def signin(username, password):
         sys.exit(0)
 
 
+# validate challenge from server
 def check_challenge_validity(packet):
     try:
         iv = packet.iv
@@ -715,6 +726,7 @@ def check_challenge_validity(packet):
         sys.exit(0)
 
 
+# symmetric encryption using AES-GCM
 def aes_gcm_encrypt(key, message_to_encrypt):
     iv = os.urandom(12)
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
@@ -723,6 +735,7 @@ def aes_gcm_encrypt(key, message_to_encrypt):
     return encrypted_text, iv, encryptor
 
 
+# symmetric decryption using AES-GCM
 def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
     decryptor = cipher.decryptor()
@@ -730,6 +743,7 @@ def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
     return decrypted_text.decode()
 
 
+# build packet for list command
 def build_list_packet(username):
     key = state['key']
     list_state['nonce'] = int(uuid.uuid4().hex, 16)
@@ -744,6 +758,7 @@ def build_list_packet(username):
     return packet
 
 
+# build packet for logout command
 def build_logout_packet():
     try:
         key = state['key']
@@ -759,6 +774,7 @@ def build_logout_packet():
         print('Error logging out')
 
 
+# handle client logout
 def handle_logout():
     try:
         for client in forward_lookup:
@@ -773,12 +789,14 @@ def handle_logout():
         print('Error')
 
 
+# read server configuration
 def read_server_configuration():
     with open('client.json') as configuration_json:
         server_configuration = json.load(configuration_json)
     return server_configuration['ip'], server_configuration['port']
 
 
+# listen to user input
 def listen_to_user_input(username, server_ip, server_port):
     packet = finduser_pb2.FindUser()
     try:
@@ -871,7 +889,6 @@ def main():
                 sys.exit(0)
             time.sleep(1)
     except KeyboardInterrupt:
-        print('main thread')
         try:
             packet = build_logout_packet()
             s.sendto(packet.SerializeToString(), (server_ip, server_port))
@@ -881,7 +898,7 @@ def main():
             print('Error when logging out. Exiting..')
             sys.exit(0)
     except Exception:
-        print('plain')
+        pass
 
 
 if __name__ == "__main__":
