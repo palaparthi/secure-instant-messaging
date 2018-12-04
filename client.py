@@ -10,6 +10,7 @@ import os
 import datetime
 
 import binascii
+import uuid
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -85,7 +86,7 @@ def establish_key(packet, username, password):
         state['stage'] = 3
         state['a'] = None
         state['key'] = shared_key
-        c2 = random.randint(1, 100)
+        c2 = int(uuid.uuid4().hex, 16)
         state['c2'] = c2
         state['c1'] = c1
     except:
@@ -125,9 +126,6 @@ def listen_for_response(me):
         deser_resp.ParseFromString(response)
         if deser_resp.packet_type == 'CLIENT-LOGOUT':
             try:
-                print(message_state)
-                print(forward_lookup)
-                print(reverse_lookup)
                 user_logging_out = reverse_lookup[address]
                 decrypted_text = aes_gcm_decrypt(message_state[user_logging_out]['shared-key'], deser_resp.encrypted_text, deser_resp.iv, deser_resp.tag)
             except:
@@ -136,9 +134,6 @@ def listen_for_response(me):
                 message_state.pop(user_logging_out)
                 forward_lookup.pop(user_logging_out)
                 reverse_lookup.pop(address)
-                print(message_state)
-                print(forward_lookup)
-                print(reverse_lookup)
         elif deser_resp.packet_type == 'LIST-RESULT':
             # List of all signed in users
             check_validity_list_result(deser_resp)
@@ -289,7 +284,7 @@ def handle_message_authentication_stage_3(received_packet, address):
 
         received_nonce = int(decrypted_text)
         received_nonce -= 1
-        nonce = random.randint(10000, 1000000)
+        nonce = int(uuid.uuid4().hex, 16)
         message_state[sender]['nonce'] = nonce
 
         # build packet to be sent
@@ -335,7 +330,7 @@ def handle_message_authentication_stage_2(received_packet, address):
         message_state[receiver]['my_dh_key'] = None
         message_state[receiver]['shared-secret'] = None
         message_state[receiver]['shared-key'] = shared_key
-        message_state[receiver]['nonce'] = random.randint(10000, 1000000)
+        message_state[receiver]['nonce'] = int(uuid.uuid4().hex, 16)
 
         # build packet to be sent
         packet = finduser_pb2.FindUser()
@@ -609,16 +604,17 @@ def find_user(inp, server_ip, server_port, username, packet):
     receiver = splits[1]
     message = ' '.join(splits[2:])
     packet.packet_type = 'FIND-USER'
+    nonce = int(uuid.uuid4().hex, 16)
 
-    encrypted_receiver, iv, encryptor = aes_gcm_encrypt(state['key'], receiver)
+    receiver_and_nonce = receiver + "|" + str(nonce)
+    encrypted_receiver, iv, encryptor = aes_gcm_encrypt(state['key'], receiver_and_nonce)
 
     packet.encrypted_text = encrypted_receiver
     packet.iv = iv
     packet.tag = encryptor.tag
-    packet.nonce = random.randint(10000, 10000000)
     if receiver not in message_state:
         message_state[receiver] = {}
-        message_state[receiver]['server-nonce'] = packet.nonce
+        message_state[receiver]['server-nonce'] = nonce
     # Save messages in buffer where value is a deque
     if receiver in message_buffer:
         message_buffer[receiver].append(message)
@@ -729,7 +725,7 @@ def aes_gcm_decrypt(key, message_to_decrypt, iv, tag):
 
 def build_list_packet(username):
     key = state['key']
-    list_state['nonce'] = random.randint(10000, 10000000)
+    list_state['nonce'] = int(uuid.uuid4().hex, 16)
     to_be_sent = str(list_state['nonce'])
     encrypted_text, iv, encryptor = aes_gcm_encrypt(key, to_be_sent)
     packet = finduser_pb2.FindUser()

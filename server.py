@@ -7,6 +7,7 @@ import datetime
 import random
 
 import os
+import uuid
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -49,15 +50,9 @@ def invalidate_client(username):
     packet.iv = iv
     packet.tag = encryptor.tag
     s.sendto(packet.SerializeToString(), address)
-    print(dict_users)
-    print(reverse_lookup)
-    print(users_state)
     dict_users.pop(username, None)
     reverse_lookup.pop(address, None)
     users_state.pop(address, None)
-    print(dict_users)
-    print(reverse_lookup)
-    print(users_state)
 
 
 def read_password_hash(username):
@@ -120,7 +115,7 @@ def handle_signin(private_key, data, address):
 
     shared_key = Utils.diffie_hellman_key_exchange(dh_private, load_dh_public_key(client_df))
 
-    update_state(username, shared_key, 2, random.randint(1000, 1000000), address)
+    update_state(username, shared_key, 2, int(uuid.uuid4().hex, 16), address)
 
     c1 = users_state[address]['c1']
     text_to_be_sent = username + '|' + dh_public.public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo).decode() + '|' + str(c1)
@@ -213,16 +208,10 @@ def handle_logout(packet, address):
     username = reverse_lookup[address]
     key = users_state[address]['key']
     decrypted_text = aes_gcm_decrypt(key, packet.encrypted_text, packet.iv, packet.tag)
-    print(dict_users)
-    print(reverse_lookup)
-    print(users_state)
     if decrypted_text == 'LOGOUT':
         dict_users.pop(username, None)
         reverse_lookup.pop(address, None)
         users_state.pop(address, None)
-    print(dict_users)
-    print(reverse_lookup)
-    print(users_state)
 
 
 def create_no_user_packet(nonce, key, receiver):
@@ -240,10 +229,14 @@ def create_no_user_packet(nonce, key, receiver):
 def find_user(data, address):
     try:
         username = reverse_lookup[address]
-        nonce = int(data.nonce)
-        nonce += 1
+        # nonce = int(data.nonce)
+        # nonce += 1
         key = users_state[address]['key']
-        receiver = aes_gcm_decrypt(key, data.encrypted_text, data.iv, data.tag)
+        receiver_and_nonce = aes_gcm_decrypt(key, data.encrypted_text, data.iv, data.tag)
+        parts = receiver_and_nonce.split("|")
+        receiver = parts[0]
+        nonce = int(parts[1])
+        nonce += 1
     except:
         print('Error while decrypting find-user packet')
     if receiver in dict_users:
